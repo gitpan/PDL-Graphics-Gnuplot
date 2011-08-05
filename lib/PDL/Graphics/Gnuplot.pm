@@ -11,7 +11,7 @@ use IO::Select;
 use Symbol qw(gensym);
 use Time::HiRes qw(gettimeofday tv_interval);
 
-our $VERSION = 0.01;
+our $VERSION = 0.02;
 
 use base 'Exporter';
 our @EXPORT_OK = qw(plot plot3d plotlines plotpoints);
@@ -1643,7 +1643,7 @@ fonts and sizes can be changed.
 =head1 COMPATIBILITY
 
 Everything should work on all platforms that support Gnuplot and Perl. That
-said, C<ONLY> Debian GNU/Linux has been tested to work. Please report successes
+said, I<ONLY> Debian GNU/Linux has been tested to work. Please report successes
 or failures on other platforms to the author. A transcript of a failed run with
 {log => 1} would be most helpful.
 
@@ -1667,14 +1667,3 @@ See http://dev.perl.org/licenses/ for more information.
 
 =cut
 
-
-
-
-# efficiency of the transposed data, type conversion
-# can't detect IPC::Open3::start() failures
-
-# splot [0:5][0:5][0:5] "-" binary record=1 format="%double%double%double" notitle with image
-# actually takes in 4-point tuples
-# plot(5, pdl(3,4,5,3,4)) should work
-
-# I don't think I need globalwith at all
