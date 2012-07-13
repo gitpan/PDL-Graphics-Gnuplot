@@ -11,8 +11,6 @@ use IO::Select;
 use Symbol qw(gensym);
 use Time::HiRes qw(gettimeofday tv_interval);
 
-our $VERSION = 0.02;
-
 use base 'Exporter';
 our @EXPORT_OK = qw(plot plot3d plotlines plotpoints);
 
@@ -83,7 +81,7 @@ sub new
               t0       => [gettimeofday]};
   bless($this, $classname);
 
-  _logEvent($this, "startGnuplot() finished") if $this->{options}{log};
+  _logEvent($this, "startGnuplot() finished");
 
 
   # the plot options affect all the plots made by this object, so I can set them
@@ -347,7 +345,7 @@ sub plot
   # terminal, and then _checkpoint() for errors.  To make this quick, the test
   # plot command contains the minimum number of data points
   my ($plotcmd, $testplotcmd, $testplotdata) =
-    plotcmd( $chunks, @{$plotOptions}{qw(3d binary globalwith)} );
+    plotcmd( $chunks, $plotOptions );
 
   testPlotcmd($this, $testplotcmd, $testplotdata);
 
@@ -386,22 +384,22 @@ sub plot
   # generates the gnuplot command to generate the plot. The curve options are parsed here
   sub plotcmd
   {
-    my ($chunks, $is3d, $isbinary, $globalwith) = @_;
+    my ($chunks, $plotOptions) = @_;
 
     my $basecmd = '';
 
     # if anything is to be plotted on the y2 axis, set it up
     if( grep {my $chunk = $_; grep {$_->{y2}} @{$chunk->{options}}} @$chunks)
     {
-      if ( $is3d )
+      if ( $plotOptions->{'3d'} )
       { barf "3d plots don't have a y2 axis"; }
 
       $basecmd .= "set ytics nomirror\n";
       $basecmd .= "set y2tics\n";
     }
 
-    if($is3d) { $basecmd .= 'splot '; }
-    else      { $basecmd .= 'plot ' ; }
+    if($plotOptions->{'3d'} ) { $basecmd .= 'splot '; }
+    else                      { $basecmd .= 'plot ' ; }
 
 
     my @plotChunkCmd;
@@ -411,14 +409,14 @@ sub plot
     foreach my $chunk (@$chunks)
     {
       my @optionCmds =
-        map { optioncmd($_, $globalwith) } @{$chunk->{options}};
+        map { optioncmd($_, $plotOptions->{globalwith}) } @{$chunk->{options}};
 
-      if( $isbinary )
+      if( $plotOptions->{binary} )
       {
         # I get 2 formats: one real, and another to test the plot cmd, in case it
         # fails. The test command is the same, but with a minimal point count. I
         # also get the number of bytes in a single data point here
-        my ($format, $formatMinimal) = formatcmd($chunk);
+        my ($format, $formatMinimal) = binaryFormatcmd($chunk);
         my $Ntestbytes_here          = getNbytes_tuple($chunk);
 
         push @plotChunkCmd,        map { "'-' $format $_"     }    @optionCmds;
@@ -432,15 +430,6 @@ sub plot
         # spaces as the number of bytes that I need, so I'm potentially doubling
         # or even tripling the amount of needed data. This is OK, since gnuplot
         # will simply ignore the tail.
-        #
-        # Some gnuplot commands require more data than they should (due to bugs
-        # in gnuplot). Example (gnuplot 4.4.0):
-        #
-        # splot [0:5][0:5][0:5] "-" binary record=1 format="%double%double%double" notitle with image
-        # should require 24 bytes per point, but it appears to require 32
-        #
-        # I can in theory detect these failures by sending more test data and
-        # looking at the ignored tail. Maybe some day later
         $testData .= " \n" x ($Ntestbytes_here * scalar @optionCmds);
       }
       else
@@ -487,7 +476,7 @@ sub plot
       return $cmd;
     }
 
-    sub formatcmd
+    sub binaryFormatcmd
     {
       # I make 2 formats: one real, and another to test the plot cmd, in case it
       # fails
@@ -499,6 +488,14 @@ sub plot
       my $format = "binary record=$recordSize format=\"";
       $format .= '%double' x $tuplesize;
       $format .= '"';
+
+      # When plotting in binary, gnuplot gets confused if I don't explicitly
+      # tell it the tuplesize. It's got its own implicit-tuples logic that I
+      # don't want kicking in. As an example, the following simple plot doesn't
+      # work in binary without this extra line:
+      # plot3d(binary => 1,
+      #        with => 'image', sequence(5,5));
+      $format .= ' using ' . join(':', 1..$tuplesize);
 
       # to test the plot I plot a single record
       my $formatTest = $format;
@@ -595,8 +592,8 @@ sub plot
         {
           # a 3D plot is 2 elements short. Use a grid as a domain
           my @dims = $dataPiddles[0]->dims();
-          if(@dims < 2)
-          { barf "plot() tried to build a 2D implicit domain, but not the first data piddle is too small"; }
+          if(@dims < 1)
+          { barf "plot() tried to build a 2D implicit domain, but the first data piddle is too small"; }
 
           # grab the first 2 dimensions to build the x-y domain
           splice @dims, 2;
@@ -815,20 +812,16 @@ sub plot
     # I send a test plot command. Gnuplot implicitly uses && if multiple
     # commands are present on the same line. Thus if I see the post-plot print
     # in the output, I know the plot command succeeded
-    my $postTestplotCheckpoint   = 'xxxxxxx Plot succeeded xxxxxxx';
-    my $print_postTestCheckpoint = "; print \"$postTestplotCheckpoint\"";
-    _printGnuplotPipe( $this, "$testplotcmd$print_postTestCheckpoint\n" );
+    _printGnuplotPipe( $this, $testplotcmd . "\n" );
     _printGnuplotPipe( $this, $testplotdata );
 
-    my $checkpointMessage = _checkpoint($this, 'ignore_invalidcommand');
+    my $checkpointMessage = _checkpoint($this, 'ignore_known_test_failures');
 
-    if(defined $checkpointMessage && $checkpointMessage !~ /^$postTestplotCheckpoint/m)
+    if( $checkpointMessage )
     {
-      # don't actually print out the checkpoint message
-      $checkpointMessage =~ s/$print_postTestCheckpoint//;
-
-      # The checkpoint message does not contain the post-plot checkpoint. This
-      # means gnuplot decided that the plot command failed.
+      # There's a checkpoint message. I explicitly ignored and threw away all
+      # errors that are allowed to occur during a test. Anything leftover
+      # implies a plot failure.
       barf "Gnuplot error: \"\n$checkpointMessage\n\" while sending plotcmd \"$testplotcmd\"";
     }
 
@@ -869,7 +862,7 @@ sub plot
       # a data-receiving mode. I'm careful to avoid this situation, but bugs in
       # this module and/or in gnuplot itself can make this happen
 
-      _logEvent($this, "Trying to read from gnuplot") if $this->{options}{log};
+      _logEvent($this, "Trying to read from gnuplot");
 
       if( $this->{errSelector}->can_read(5) )
       {
@@ -882,11 +875,11 @@ sub plot
         sysread $pipeerr, $byte, 1;
         $fromerr .= $byte;
 
-        _logEvent($this, "Read byte '$byte' (0x" . unpack("H2", $byte) . ") from gnuplot child process") if $this->{options}{log};
+        _logEvent($this, "Read byte '$byte' (0x" . unpack("H2", $byte) . ") from gnuplot child process");
       }
       else
       {
-        _logEvent($this, "Gnuplot read timed out") if $this->{options}{log};
+        _logEvent($this, "Gnuplot read timed out");
 
         $this->{checkpoint_stuck} = 1;
 
@@ -899,7 +892,7 @@ EOM
 
     $fromerr = $1;
 
-    my $warningre = qr{^(?:Warning:\s*(.*?)\s*$)\n?}m;
+    my $warningre = qr{^.*(?:warning:\s*(.*?)\s*$)\n?}mi;
 
     if(defined $flags && $flags =~ /printwarnings/)
     {
@@ -911,20 +904,38 @@ EOM
     # I've now read all the data up-to the checkpoint. Strip out all the warnings
     $fromerr =~ s/$warningre//gm;
 
-    # if asked, get rid of all the "invalid command" errors. This is useful if
-    # I'm testing a plot command and I want to ignore the errors caused by the
-    # test data bein sent to gnuplot as a command. The plot command itself will
-    # never be invalid, so this doesn't actually mask out any errors
-    if(defined $flags && $flags =~ /ignore_invalidcommand/)
+    # if asked, ignore and get rid of all the errors known to happen during
+    # plot-command testing. These include
+    #
+    # 1. "invalid command" errors caused by the test data bein sent to gnuplot
+    #    as a command. The plot command itself will never be invalid, so this
+    #    doesn't actually mask out any errors
+    #
+    # 2. "invalid range" errors caused by requested plot bounds (xmin, xmax,
+    #    etc) tossing out any test-plot data. The point of the plot-command
+    #    testing is to make sure the command is valid, so any out-of-boundedness
+    #    of the test data is irrelevant
+    if(defined $flags && $flags =~ /ignore_known_test_failures/)
     {
       $fromerr =~ s/^gnuplot>\s*(?:$testdataunit_ascii|e\b).*$ # report of the actual invalid command
                     \n^\s+\^\s*$                               # ^ mark pointing to where the error happened
                     \n^.*invalid\s+command.*$//xmg;            # actual 'invalid command' complaint
+
+
+      # ignore a simple 'invalid range' error observed when, say only the xmin
+      # bound is set and all the data is below it
+      $fromerr =~ s/^gnuplot>\s*plot.*$                        # the test plot command
+                    \n^\s+\^\s*$                               # ^ mark pointing to where the error happened
+                    \n^.*range\s*is\s*invalid.*$//xmg;         # actual 'invalid range' complaint
+
+      # fancier plots show a different 'invalid range' error. Observed when xmin
+      # > xmax (inverted x axis) and when there's out-of-bounds data
+      $fromerr =~ s/^gnuplot>\s*plot.*$                        # the test plot command
+                    \n^\s+\^\s*$                               # ^ mark pointing to where the error happened
+                    \n^.*all\s*points.*undefined.*$//xmg;      # actual 'invalid range' complaint
     }
 
-    # strip out all the leading/trailing whitespace
-    $fromerr =~ s/^\s*//;
-    $fromerr =~ s/\s*$//;
+    $fromerr =~ s/^\s*(.*?)\s*/$1/;
 
     return $fromerr;
   }
@@ -978,11 +989,9 @@ sub _printGnuplotPipe
   my $pipein = $this->{in};
   print $pipein $string;
 
-  if( $this->{options}{log} )
-  {
-    _logEvent($this,
-              "Sent to child process ==========\n" . $string . "\n=========================" );
-  }
+  my $len = length $string;
+  _logEvent($this,
+            "Sent to child process $len bytes ==========\n" . $string . "\n=========================" );
 }
 
 sub _wcolsGnuplotPipe
@@ -999,11 +1008,8 @@ sub _wcolsGnuplotPipe
     wcols @_, *FH;
     close FH;
 
-    if ( $this->{options}{log} )
-    {
-      _logEvent($this,
-                "Sent to child process ==========\n" . $string . "\n=========================" );
-    }
+    _logEvent($this,
+              "Sent to child process ==========\n" . $string . "\n=========================" );
   }
 }
 
@@ -1128,8 +1134,13 @@ sub _logEvent
   my $this  = shift;
   my $event = shift;
 
+  return unless $this->{options}{log}; # only log when asked
+
   my $t1 = tv_interval( $this->{t0}, [gettimeofday] );
-  printf STDERR "==== PDL::Graphics::Gnuplot PID $this->{pid} at t=%.4f: $event\n", $t1;
+
+  # $event can have '%', so I don't printf it
+  my $logline = sprintf "==== PDL::Graphics::Gnuplot PID $this->{pid} at t=%.4f:", $t1;
+  print STDERR "$logline $event\n";
 }
 
 1;
@@ -1280,7 +1291,7 @@ confused about when to use implicit domains. For example, C<plot($a,$b)> is
 interpreted as plotting $b vs $a, I<not> $a vs an implicit domain and $b vs an
 implicit domain. If 2 implicit plots are desired, add a separator:
 C<plot($a,{},$b)>. Here C<{}> is an empty curve options hash. If C<$a> and C<$b>
-have the same dimensions, one can also do C<plot($a->cat($b))>, taking advantage
+have the same dimensions, one can also do C<plot($a-E<gt>cat($b))>, taking advantage
 of PDL threading.
 
 Note that the C<tuplesize> curve option is independent of implicit domains. This
@@ -1398,10 +1409,10 @@ this log will contain binary data, if the 'binary' option is given (see below)
 =item binary
 
 If given, binary data is passed to gnuplot instead of ASCII data. Binary is much
-more efficient (and thus faster), but due to some bugs in Gnuplot, it does not
-work for some more complicated plots (mostly things involving colors). These
-cases will produce gnuplot errors detected by PDL::Graphics::Gnuplot, or will
-produce clearly erroneous plots. Reverting the ASCII makes these plots work.
+more efficient (and thus faster). Binary input works for most plots, but not for
+all of them. An example where binary plotting doesn't work is 'with labels'.
+ASCII plotting is generally better tested so ASCII is the default. This will
+change at some point in the near future
 
 =back
 
