@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               PDL-Graphics-Gnuplot
-version:            0.05
+version:            0.06
 abstract:           Gnuplot-based plotter for PDL
 author:
     - Dima Kogan <dima@secretsauce.net>
