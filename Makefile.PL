@@ -11,7 +11,7 @@ sub parseversion
 #
 # I parse out the 0.03 part
   open DCH, 'debian/changelog' or die "Couldn't open debian/changelog";
-  my ($version) = <DCH> =~ /^\S+ \s* \( ([0-9\.]+) .*? \)/x
+  my ($version) = <DCH> =~ /^\S+ \s* \( ([0-9\.]+b?) .*? \)/x
     or die "Couldn't parse version from debian/changelog";
   close DCH;
 
@@ -32,10 +32,8 @@ Gnuplot to continue. Use your package manager, or download the source from
 http://www.gnuplot.info
 EOM
 
-    # This exit is mostly for cpan testers to not tell me that my module is
-    # broken
     exit 0;
- }
+  }
 }
 
 

@@ -1,7 +1,7 @@
 --- #YAML:1.0
 name:               PDL-Graphics-Gnuplot
-version:            0.06
-abstract:           Gnuplot-based plotter for PDL
+version:            1.0b
+abstract:           Gnuplot-based plotting for PDL
 author:
     - Dima Kogan <dima@secretsauce.net>
 license:            perl
@@ -18,7 +18,7 @@ no_index:
     directory:
         - t
         - inc
-generated_by:       ExtUtils::MakeMaker version 6.57_05
+generated_by:       ExtUtils::MakeMaker version 6.56
 meta-spec:
     url:      http://module-build.sourceforge.net/META-spec-v1.4.html
     version:  1.4

@@ -1,28 +1,4 @@
-libpdl-graphics-gnuplot-perl (0.06) unstable; urgency=low
-
-  * 'matrix' plots now handled by gnuplot, not by PDL. This makes things
-    much more efficient, and allows fancier features like contours to work
-  * binary communication by default
-
- -- Dima Kogan <dima@secretsauce.net>  Tue, 24 Jul 2012 01:25:25 -0700
-
-libpdl-graphics-gnuplot-perl (0.05) unstable; urgency=low
-
-  * Added another acceptable error during plot command testing.
-    This makes 'with image' plots work again
-
- -- Dima Kogan <dima@secretsauce.net>  Fri, 20 Jul 2012 15:16:24 -0700
-
-libpdl-graphics-gnuplot-perl (0.04) unstable; urgency=low
-
-  * binary communication now works for the vast majority of plots
-    'with labels' is the main notable exception
-  * I can now build an implicit 3D plot even with a 1D domain.
-  * Fixed bug where a specific xmin setting caused a plot test failure
-
- -- Dima Kogan <dima@secretsauce.net>  Fri, 13 Jul 2012 01:33:43 -0700
-
-libpdl-graphics-gnuplot-perl (0.03) unstable; urgency=low
+libpdl-graphics-gnuplot-perl (1.0b) unstable; urgency=low
 
   * debian packaging cleanup
   * updated email address
