@@ -1,16 +1,19 @@
 #!perl
 
-use Test::More tests => 73;
+use Test::More tests => 87;
 
 BEGIN {
     use_ok( 'PDL::Graphics::Gnuplot', qw(plot) ) || print "Bail out!\n";
 }
 
-
 use File::Temp qw(tempfile);
 use PDL;
 use PDL::Graphics::Gnuplot;
 
+##########
+# Uncomment these to test error handling on Microsoft Windows, from within POSIX....
+# $PDL::Graphics::Gnuplot::debug_echo = 1;
+# $PDL::Graphics::Gnuplot::MS_io_braindamage = 1;
 
 diag( "Testing PDL::Graphics::Gnuplot $PDL::Graphics::Gnuplot::VERSION, Perl $], $^X" );
 
@@ -26,6 +29,8 @@ our (undef, $testoutput) = tempfile('pdl_graphics_gnuplot_test_XXXXXXX');
 
 
   eval{ plot ( {terminal => 'dumb 79 24', output => $testoutput}, $x); };
+
+
   ok(! $@,           'basic plotting succeeded without error' )
     or diag "plot() died with '$@'";
   ok(-e $testoutput, 'basic plotting created an output file' )
@@ -42,15 +47,46 @@ our (undef, $testoutput) = tempfile('pdl_graphics_gnuplot_test_XXXXXXX');
 ##############################
 #
 {
-  # purposely fail. make sure error message is as expected. This means the gnuplot
-  # process STDERR is read and parsed correctly
+  # purposely fail.  This one should fail by sensing that "bogus" is bogus, *before* sending 
+  # anything to Gnuplot.
 
-  eval{ plot ( {terminal => 'dumb 79 24', output => $testoutput}, with => 'bogus', $x); };
+  eval{ plot ( {terminal => 'dumb 79 24', output => $testoutput, silent=>1}, with => 'bogus', $x); };
   print "error detection: found\n$@\n";
-  ok($@ && $@ =~ /with\ bogus/s,  'error detection works' )
+  ok($@ && $@ =~ /invalid plotstyle \'with\ bogus\' in plot/s,  'we find bogus "with" before sending to gnuplot' )
     or diag "plot() produced no error";
 
+  eval{ plot( {terminal => 'dumb 79 24', output=>$testoutput, topcmds=>"this should fail"}, with=>'line', $x); };
+  ok($@ && $@ =~ m/invalid command/o, "we detect an error message from gnuplot");
+
   unlink $testoutput;
+}
+
+##############################
+# 
+my $w;
+
+{
+    # Check timeout.
+    eval {
+	 $w = gpwin( 'dumb', size=>[79,24],output=>$testoutput, wait=>1);
+    };
+    ok((!$@ and (ref $w)), "constructor works");
+    eval {
+	$w->plot ( { topcmds=>'pause 2'}, with=>'line', $x); };
+
+    ok($@ && $@ =~ m/1 second/og, "gnuplot response timeout works" );
+}
+
+##############################
+{ 
+    eval { 
+	$w->restart;
+    };
+    print "restart returned '$@'\n";
+    ok(!$@, "restart worked OK\n");
+
+    undef $w;
+    ok("destructor worked OK\n");
 }
 
 ##############################
@@ -131,6 +167,7 @@ unlink $testoutput;
 ok(@lines == 24, "test plot made 24 lines");
 ok(!(-e $testoutput), "test file got deleted");
 
+
 eval { $w->replot(); };
 ok(!$@, "replot works");
 
@@ -158,6 +195,23 @@ unlink $testoutput;
 ok(@l3==24,"test replot again made 24 lines");
 
 ok($l3[12]=~ m/\#\s+\*/, "test plot has two curves and curve 2 is above curve 1");
+
+# test that options updating modifies the replot
+eval { $w->options(yrange=>[200,400]);  $w->replot(); };
+ok(!$@, "options set and replot don't crash");
+
+open FOO,"<$testoutput";
+@l4 = <FOO>;
+close FOO;
+unlink $testoutput;
+ok(@l4 == 24, "replot made 24 lines after option set");
+
+$same = 1;
+for $i(0..23) {
+    $same &= ($l3[$i] eq $l4[$i]);
+}
+ok(!$same, "modifying plot option affects replot");
+
 
 ##############################
 # Test parsing of plot options when provided before curve options
@@ -291,9 +345,12 @@ unlink $testoutput;
 # Interactive tests
 
 SKIP: {
-    skip "Skipping x11 interactive tests - set environment variables DISPLAY and\n   GNUPLOT_INTERACTIVE to enable",
-         16
-	     unless(exists($ENV{GNUPLOT_INTERACTIVE}) and $ENV{DISPLAY});
+    unless(exists($ENV{GNUPLOT_INTERACTIVE}) and $ENV{DISPLAY}) {
+	print STDERR "\n\n******************************\nSkipping 16 interactive tests that use X11.\n    Set the environment variables DISPLAY and\n    GNUPLOT_INTERACTIVE to enable them.\n******************************\n\n";
+	skip "Skipping x11 interactive tests - set environment variables DISPLAY and\nGNUPLOT_INTERACTIVE to enable them.",
+	16;
+    }
+
     
     eval { $w=gpwin(x11); };
     ok(!$@, "created an X11 object");
@@ -395,3 +452,46 @@ SKIP: {
 $w=gpwin(x11); 
 eval { print $w->read_mouse(); };
 ok($@ =~ m/no existing/,"Trying to read the mouse input on an empty window doesn't work");
+
+
+##############################
+# Test date plotting
+eval {$w=gpwin( "dumb", size=>[79,24,'ch'],output=>$testoutput );};
+ok(!$@, "dumb terminal still works");
+
+# Some date stamps
+@dates = (-14552880,   # Apollo 11 launch
+	  0,           # UNIX epoch
+	  818410080,   # SOHO launch
+	  946684799,   # The banking system did not melt down.
+	  1054404000); # A happy moment in 2003
+$dates = pdl(@dates);
+
+eval { $w->plot( {xdata=>'time'}, with=>'points', $dates->clip(0), xvals($dates) ); };
+ok(!$@, "time plotting didn't fail");
+open FOO,"<$testoutput";
+$lines1 = join("",(<FOO>));
+close FOO;
+
+eval { $w->plot( {xr=>[0,$dates->max],xdata=>'time'}, with=>'points', $dates, xvals($dates) ); };
+ok(!$@, "time plotting with range didn't fail");
+open FOO,"<$testoutput";
+$lines2 = join("",(<FOO>));
+close FOO;
+
+eval { $w->plot( {xr=>[$dates->at(3),$dates->at(4)], xdata=>'time'}, with=>'points', $dates, xvals($dates));};
+ok(!$@, "time plotting with a different range didn't fail");
+open FOO,"<$testoutput";
+$lines3 = join("",(<FOO>));
+close FOO;
+
+print "lines1:\n$lines1\n\nlines2:\n$lines2\n\nlines3:\n$lines3\n\n";
+SKIP: {
+    skip "Skipping date ranging tests since Gnuplot itself doesn't work",2;
+ok($lines1 eq $lines2,  "Setting the time range to what it would be anyway duplicates the graph");
+ok($lines2 cmp $lines3, "Modifying the time range modifies the graph");
+}
+
+unlink $testoutput;
+
+

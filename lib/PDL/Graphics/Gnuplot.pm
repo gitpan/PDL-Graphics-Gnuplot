@@ -172,7 +172,7 @@ same number of elements.  For example:
  $labels = ['one','two','three','four','five'];
  gplot(with=>'labels',$x,$y,$labels);
 
-See below for supported plot styles.
+See below for supported curve styles.
 
 Gnuplot is built around a monolithic plot model - it is not possible to 
 add new data directly to a plot without redrawing the entire plot. To support
@@ -1388,7 +1388,7 @@ use IO::Select;
 use Symbol qw(gensym);
 use Time::HiRes qw(gettimeofday tv_interval);
 
-our $VERSION = '1.0';
+our $VERSION = '1.1';
 
 use base 'Exporter';
 our @EXPORT_OK = qw(plot plot3d line lines points image terminfo reset restart replot);
@@ -1396,6 +1396,9 @@ our @EXPORT = qw(gpwin gplot greplot greset grestart);
 
 our $check_syntax = 0;
 our $gnuplot_req_v = 4.4;
+
+our $MS_io_braindamage = ($^O =~ m/MSWin32/i);    # Do some different things on Losedows
+our $debug_echo = 0;                              # If set, inject commands into the returned stream to mimic Losedows
 
 # when testing plots with binary i/o, this is the unit of test data
 my $testdataunit_binary = "........"; # 8 bytes - length of an IEEE double
@@ -1601,8 +1604,7 @@ sub output {
 	$terminal = lc(shift);
 	if(!exists($termTab->{$terminal})) {
 	    my $s = "PDL::Graphics::Gnuplot::new: the first argument to new must be a terminal type.\n".
-		"Run \"PDL::Graphics::Gnuplot::terminfo\" for a list of valid terminal types.\n".
-		"(default type for PDL::Graphics::Gnuplot is 'x11')\n";
+		terminfo('',1);
 	    barf($s);
 	}
 	
@@ -1624,6 +1626,7 @@ sub output {
 	    _parseOptHash( $termOptions, $termTab->{$terminal}->{opt}, @_ );
 	    
 	    $this->{options}->{output} = $termOptions->{output};
+	    $this->{wait} = $termOptions->{wait};  
 	    delete $termOptions->{output};
 	    
 	    ## Emit the terminal options line for this terminal.
@@ -1777,6 +1780,9 @@ sub options {
     my($me) = _obj_or_global(\@_);
     $me->{options} = {} unless defined($me->{options});
     _parseOptHash($me->{options}, $pOpt, @_);
+    if($me->{last_plot} && $me->{last_plot}->{options}) {
+	_parseOptHash($me->{last_plot}->{options}, $pOpt, @_);
+    }
     return $me->{options};
 }
 
@@ -2108,7 +2114,13 @@ sub plot
 	}
 	print STDERR "plot: WARNING: range specifiers aren't allowed as curve options after the first\ncurve.  I ignored $rangeflag of them. (You can also use plot options for ranges)\n"
 	    if($rangeflag);
+
+#	for my $k(qw/xrange yrange zrange trange/) {
+#	    print STDERR "Warning: curve option $k overriding plot option $k\n"
+#		if(exists($this->{options}->{$k})  and  exists($chunks->[0]->{options}->{$k}));
+#	}
     }
+
 
 
     ##############################
@@ -2165,8 +2177,8 @@ sub plot
     my $testcmd;
     {
 	my $fl = shift @plotcmds;
-	$plotcmd =  $plotOptionsString . $fl;
-	$testcmd =  $testOptionsString . $fl if($check_syntax);
+	$plotcmd =  $fl;
+	$testcmd =  $fl if($check_syntax);
     }
 
     for my $i(0..$#plotcmds){
@@ -2241,8 +2253,9 @@ sub plot
     $testcmd .= join("", map { $_->{testdata} } @$chunks) if($check_syntax);
 
     # Stash this plot command in the debugging variable
-    our $last_plotcmd = $plotcmd;
-    our $last_testcmd = $testcmd if($check_syntax);
+
+    our $last_plotcmd = $plotOptionsString.$plotcmd;
+    our $last_testcmd = $plotOptionsString.$testcmd if($check_syntax);
 
     if($PDL::Graphics::Gnuplot::DEBUG) {
 	print "plot command is:\n$plotcmd\n";
@@ -2252,7 +2265,7 @@ sub plot
     # The commands are assembled.  Now test 'em by sending the test command down the pipe.
     my $checkpointMessage;
     if($check_syntax) {
-	_printGnuplotPipe( $this, "syntax", $testcmd );
+	_printGnuplotPipe( $this, "syntax", $plotOptionsString.$testcmd );
 	$checkpointMessage = _checkpoint($this,"syntax");
 	
 	if(defined $checkpointMessage && $checkpointMessage !~ /^$postTestplotCheckpoint/m)
@@ -2262,6 +2275,16 @@ sub plot
 	}
     }
 
+
+    ##############################
+    ##############################
+    ##### Send the PlotOptionsString 
+    _printGnuplotPipe( $this, "main", $plotOptionsString);
+    my $optionsWarnings = _checkpoint($this, "main", {printwarnings=>1});
+    if($optionsWarnings) {
+	barf( "The gnuplot process returned an error during plot setup:$optionsWarnings\n\n");
+    }
+    
     ##############################
     ##############################
     ##### Finally..... send the actual plot command to the gnuplot device.
@@ -2276,13 +2299,13 @@ sub plot
 	    # Currently all images are sent binary
 	    $p = $chunk->{data}->[0]->double->copy;
 	    $last_plotcmd .= " [ ".length(${$p->get_dataref})." bytes of binary image data ]\n";
-	    _printGnuplotPipe($this, "main", ${$p->get_dataref});
+	    _printGnuplotPipe($this, "main", ${$p->get_dataref},1);
 
 	} elsif( $chunk->{binaryCurveFlag}  ) {
 	    # Send in binary if the binary flag is set.
 	    $p = pdl(@{$chunk->{data}})->mv(-1,0)->double->copy;
 	    $last_plotcmd .= " [ ".length(${$p->get_dataref})." bytes of binary data ]\n";
-	    _printGnuplotPipe($this, "main", ${$p->get_dataref});
+	    _printGnuplotPipe($this, "main", ${$p->get_dataref},1);
 
 	} else {
 	    # Not in binary mode - send this chunk in ASCII.  Each line gets one tuple, followed
@@ -2297,7 +2320,8 @@ sub plot
 		# Emit $p as a collection of " " separated lines, followed by "e".
 		_printGnuplotPipe($this,
 				  "main",
-				  join("\n", map { join(" ", $_->list) } $p->dog)  .  "\ne\n"
+				  join("\n", map { join(" ", $_->list) } $p->dog)  .  "\ne\n",
+				  1
 		    );
 	    } else {
 		# It's a collection of list ref data only.  Assemble strings.
@@ -2318,13 +2342,15 @@ sub plot
 		    $s .= "\n";                     # add newline
 		}
 		$s .= "e\n";                        # end the command
-		_printGnuplotPipe($this, "main", $s);
+		_printGnuplotPipe($this, "main", $s, 1);
 	    }
 	}
     }
 	
-    my $plotWarnings = _checkpoint($this, "main", 'printwarnings');
-    
+    my $plotWarnings = _checkpoint($this, "main", {printwarnings=>1});
+    if($plotWarnings) {
+	barf("the gnuplot process returned an error during plotting: $plotWarnings\n\n");
+    }
 
     ##############################
     # Finally, finally ...  send any required cleanup commands.  This 
@@ -2351,7 +2377,7 @@ sub plot
     if($check_syntax) {
 	$PDL::Graphics::Gnuplot::last_testcmd .= $cleanup_cmd;
 	_printGnuplotPipe($this, "syntax", $cleanup_cmd);
-	$checkpointMessage= _checkpoint($this, "syntax", 'printwarnings');
+	$checkpointMessage= _checkpoint($this, "syntax", {printwarnings=>1});
 	if($checkpointMessage) {
 	    barf "Gnuplot error: \"$checkpointMessage\" after syntax-checking cleanup cmd \"$cleanup_cmd\"\n";
 	}
@@ -2359,7 +2385,7 @@ sub plot
     
     $PDL::Graphics::Gnuplot::last_plotcmd .= $cleanup_cmd;
     _printGnuplotPipe($this, "main", $cleanup_cmd);
-    $checkpointMessage= _checkpoint($this, "main", 'printwarnings');
+    $checkpointMessage= _checkpoint($this, "main", {printwarnings=>1});
     if($checkpointMessage) {
 	barf "Gnuplot error: \"$checkpointMessage\" after sending cleanup cmd \"$cleanup_cmd\"\n";
     }
@@ -2465,6 +2491,8 @@ sub plot
 	    # Look for the plotStyleProps entry.  If not there, try cleaning up the with style
 	    # before giving up entirely.
 	    unless( exists( $plotStyleProps->{$with[0]}->[0] ) ) {
+		our $plotStylesAbbrevs;
+
 		# Try pluralizing and lc'ing if that works...
 		if($with[0] !~ m/s$/i  and  exists( $plotStyleProps->{lc $with[0].'s'} ) ) {
 		    $with[0] = lc $with[0].'s';
@@ -2550,7 +2578,7 @@ sub plot
 
 	    ##############################
 	    # Implicit dimensions in 3-D plots require imgFlag to be set...
-	    $imgFlag |= ($tuplematch[0]<0 && !!$is3d);
+	    $imgFlag |= ($tuplematch[0]<0 && !!$is3d) if(defined($tuplematch[0]));
 
 
 	    ##############################
@@ -3109,7 +3137,7 @@ sub read_mouse {
 	unless($this->{replottable});
 
     $mouse_serial++;
-    my $string = _checkpoint($this, "main", "read_mouse: prepare-to-mouse ($mouse_serial)");
+    my $string = _checkpoint($this, "main", {notimeout=>1});
 
     print STDERR $message;
 
@@ -3119,7 +3147,7 @@ if( exists("MOUSE_BUTTON") * exists("MOUSE_X") * exists("MOUSE_Y") )  print "Key
 EOC
 	);
 
-    $string = _checkpoint($this, "main", "read_mouse: read",1);
+    $string = _checkpoint($this, "main", {notimeout=>1});
 
     $string =~ m/Key: (\-?\d+)( +at xy:([^\s\,]+),([^\s\,]+)? button:(\d+)? shift:(\d+) alt:(\d+) ctrl:(\d+))?/ 
 	|| barf "read_mouse: string $string doesn't look right - doesn't match parse regexp.\n";
@@ -3263,6 +3291,8 @@ EOMSG
 	actions=> {
 	    # These defaults can be overridden.
 	    'd'        => ['Delete last point (or DEL or backspace or shift-button)', \&__del],
+	    '#010'     => \&__quit, # NEWLINE (ENTER)
+	    '#013'     => \&__quit, # RETURN
 	    "#127"     => \&__del,  # DEL
 	    "#008"     => \&__del,  # BS
 	    'BUTTON1S' => \&__del,  # shift-click
@@ -3321,6 +3351,7 @@ EOMSG
 	if($opt->{markup}){
 	    $this->markup( with => $opt->{markup},$poly->mv(-1,0)->dog);
 	}
+
     } while(($h->{'b'} || $h->{'k'}) and !$this->{quit} and ($opt->{n_points}==0  or $poly->dim(1)<$opt->{n_points}));
     
     print "\n";
@@ -3526,6 +3557,10 @@ our $pOptionsTable =
 
     'tee'       => ['b', sub { "" }, undef, undef,
 		    '[pseudo] Tee gnuplot commands to stdout for inspection'
+    ],
+
+    'silent'      => ['b', sub { "" }, undef, undef, 
+		    '[pseudo] Be silent about gnuplot errors'
     ],
 
       # topcmds/extracmds/bottomcmds: contain explicit strings for gnuplot.
@@ -4091,20 +4126,20 @@ $cOpt = [$cOptionsTable, $cOptionsAbbrevs, "curve option"];
 #              While it has access to plot options, it probably shouldn't modify them.
 
 our $plotStyleProps ={
-### key                ts         3dts         img  bin
+### key                ts         3dts         img  bin     prefrobnicator 
     boxerrorbars   => [ [3,4,5],  0,            0, undef ],
     boxes          => [ [2,3],    0,            0, undef ],
     boxxyerrorbars => [ [4,6],    0,            0, undef ],
     candlesticks   => [ [5,6],    0,            0, undef ],
-    circles        => [ [3],      0,            0, undef ],
+    circles        => [ [2,3],    0,            0, undef ],
     dots           => [ [-1,2],   [3],          0, undef ],
     ellipses       => [ [2,3,4,5],0,            0, undef ],
-    filledcurves   => [ [-2,3],   0,            0, undef ],
+    filledcurves   => [ [2,3],    0,            0, undef ],
     financebars    => [ [5],      0,            0, undef ],
     fsteps         => [ [-1,2],   0,            0, undef ],
     histeps        => [ [-1,2],   0,            0, undef ],
-    histogram      => [ [2,3],    0,            0, undef ],
-    newhistogram   => [ [2,3],    0,            0, undef ],
+    histogram      => [ [1..99],  0,            0, undef ],
+    newhistogram   => [ [1..99],  0,            0, undef ],
     fits           => [ [-1],     [-1],         1, 1     , \&_with_fits_prefrobnicator ],
     image          => [ [-1,3],   [-1,4],       1, 1     ],
     impulses       => [ [-1,2,3], [-1,-2,3,4],  0, undef ],
@@ -4122,8 +4157,55 @@ our $plotStyleProps ={
     xerrorlines    => [ [-3,4],   0,            0, undef ],
     xyerrorlines   => [ [-4,6],   0,            0, undef ],
     yerrorlines    => [ [-3,4],   0,            0, undef ],
-    pm3d           => [ 0,        [-1,4],       1, 1 ]
+    pm3d           => [ 0,        [-1,3,4],     1, 1 ]
 };
+
+##############################
+# plotStyleDocs - just a one-line string for summarizing each plot style.  
+# These are not (yet) used but should be incorporated into a documentation schema.
+our $plotStyleSyntax = 'Tuple columns are listed for each style. "[]": optional.  "{}": 3-D style';
+our $plotStyleDocs ={
+    boxerrorbars   => ["boxes on X axis",                       "x, y, dy, [dx]; x, y, ylo, yhi, dx"],
+    boxes          => ["boxes sitting on X axis",               "x, y, [dx]"],
+    boxxyerrorbars => ["XY errorbars as rectangles",            "x, y, dx, dy; x, y, xlo, xhi, ylo, yhi"],
+    candlesticks   => ["box-and-errorbar plots",                "x, blo, wlo, whi, bhi,"],
+    circles        => ["circles",                               "x, y, [r]"],
+    dots           => ["Tiny dots (scatterplot)",               "[x], y; {x, y, z}"],
+    ellipses       => ["ellipses",                              "x, y, [dmaj, [dmin, [ang]]]"],
+    filledcurves   => ["fill polygon, to axis, or topoint",     "x, y; x, y1, y2"],
+    financebars    => ["financial stem plot",                   "x, open, lo, hi, close"],
+    fsteps         => ["steps (Y first; cf histeps, steps)",    "[x], y"],
+    histeps        => ["steps (centered; cf fsteps, steps)",    "[x], y"],
+    histograms     => ["histogram (set tuplesize if >99 cols)", "y, [y1, [y2, [...]]]"],
+    newhistogram   => ["histogram (set tuplesize if >99 cols)", "y, [y1, [y2, [...]]]"],
+    fits           => ["FITS image with WCS info in header",    "[x, y], i; {[x, y, z], i}"],
+    image          => ["I (WxH), RGB (WxHx3) or RGBA (WxHx4)",  "[x, y], i; {[x, y, z], i}"],
+    impulses       => ["Vert lines from y=0 or z=0 to point",   "[x], y; {[x, y], z}"],
+    labels         => ["Text at given location",                "x, y, str; {x, y, z, str}"],
+    lines          => ["Simple line plot",                      "[x], y; {[x, y], z}"],
+    linespoints    => ["Lines with symbols at points",          "[x], y; {[x, y], z}"],
+    points         => ["Small symbol at each point",            "[x], y; {[x, y], z}"],
+    rgbimage       => ["RGB image: 2D with R,G,B",              "[x, y], r,g,b;   {[x, y, z], r,g,b}"],
+    rgbalpha       => ["RGBA image: 2D with R,G,B,A",           "[x, y], r,g,b,a; {[x, y, z], r,g,b,a}"],
+    steps          => ["steps (Y last; cf fsteps, histeps)",    "[x], y"],
+    vectors        => ["Plot a vector field",                   "x, y, dx, dy; {x, y, z, dx, dy, dz}"],
+    xerrorbars     => ["Whisker errorbars in X",                "x, y, dx;   x, y, xlo, xhi"],
+    xyerrorbars    => ["Whisker errorbars in X & Y",            "x, y, dx, dy; x, y, xlo, xhi, ylo, yhi"],
+    yerrorbars     => ["Whisker errorbars in Y",                "x, y, dy;   x, y, ylo, yhi"],
+    xerrorlines    => ["Whisker errorbars in X, connected",     "x, y, dx;   x, y, xlo, xhi"],
+    xyerrorlines   => ["Whisker errorbars in X & Y, connected", "x, y, dx, dy; x, y, xlo, xhi, ylo, yhi"],
+    yerrorlines    => ["Whisker errorbars in Y, connected",     "x, y, dy;   x, y, ylo, yhi"],
+    pm3d           => ["Colored 3-D surface plot",              "{[x,y,z],[i]}"]
+};
+    
+
+our $plotStyleAbbrevs = _gen_abbrev_list(keys %$plotStyleProps);
+# Make some tweaks to the abbreviations...
+map { $plotStyleAbbrevs->{$_} = 'lines' } qw/ li lin line lines /;
+$plotStyleAbbrevs->{box} = 'boxes';
+$plotStyleAbbrevs->{lp} = 'linespoints';
+map { $plotStyleAbbrevs->{$_} = 'histeps' } qw/ hs hi his hist /;
+
 
 ##############################
 # palettesTab - this is a table mapping palette names to rgb specifications in gnuplot, together
@@ -4598,6 +4680,11 @@ sub _emitOpts {
 # Different codes emit whole lines (e.g. for setting plot options) or
 # space-delimited words (e.g. for setting curve options).  Curve
 # option emitters have codes that start with 'c'.
+#
+# Although most of the emitters take just (keyword, value, options-hash), 
+# they may take a fourth parameter containing the complete object.
+# That's useful for things like "crange", which needs to know the global
+# options state to know how to emit itself.
 
 our $_OptionEmitters = {
     #### Default output -- a collection of terms with spaces between them as a plot option
@@ -4715,9 +4802,8 @@ our $_OptionEmitters = {
 
     #### A boolean or 'time' (for <foo>data plot options)
     'bt' => sub { my($k,$v,$h) = @_;
-		  return "" unless defined($v);
-		  return "set $k $v\n" if($v=~m/^t/i);
-		  return "set $k\n";
+		  return "set $k\n" unless ($v // ""  and  $v=~m/^t/i);
+		  return "set $k $v\n";rxt hel
                  },
 
     #### A space-separated collection of terms as a plot option
@@ -4952,24 +5038,53 @@ our $_OptionEmitters = {
 
 		     # first element is an empty range specifier - emit.
 		     return "set $k ".join(" ",@$v)."\n" if(($v->[0] // '') =~ m/\s*\[\s*\]/);
+
+		     my $c = substr($k,0,1);
+		     my $tfmt = ( $h->{$c."data"} // "" ) =~ m/time/;
 		     
 		     # first element has a nonempty range specifier (naked or not).
 		     if(($v->[0] // '') =~ m/\:/) {
-			 unless($v->[0] =~ m/^\s*\[/) {
+			 $v->[0]=~ s/^\s*((.*[^\s])?)\s*$/$1/; # trim leading and trailing whitespace if present
+
+			 unless($v->[0] =~ m/^\[/) {
 			     # the first char was not a '['; assume it is a naked range and patch accordingly.
 			     $v->[0] = "[$v->[0]]";
 			 }
-			 # Now the first element is a patched up range and the whole shebang can be emitted.
-			 return "set $k ".join(" ",@$v)."\n";
+			 
+			 if($tfmt) {
+			     # Make sure we have quotes as necessary
+			     $v->[0] =~ s/\[([^\"\:\*]+)\:/\[\"$1\"\:/;
+			     $v->[0] =~ s/\:([^\"\:\*]+)\]/\:\"$1\"\]/;
+			 }
+			 my $s = join(" ",@$v);
+			 $s =~ s/\[\:/\[*\:/;
+			 $s =~ s/\:\]/\:*\]/;
+
+			 return "set $k $s\n";
 		     }
 		     # If we got here, the first element has no ':'.  Treat the first two elements as numbers and make a range 
 		     # specifier out of 'em, then emit.
+		     # Here's a little fillip: gnuplot requires quotes around time ranges
+		     # if the corresponding axes are time data.  Handle that bizarre case.
+		     if( ($h->{$c."data"} // "" ) =~ m/time/ ) {
+			 return sprintf("set %s [%s:%s]\n",$k, ((defined $v->[0])?"\"$v->[0]\"":"*"), ((defined $v->[1])?"\"$v->[1]\"":"*"));
+		     }
+	
 		     return sprintf("set %s [%s:%s] %s\n", $k, ((defined $v->[0])?$v->[0]:"*"), ((defined $v->[1])?$v->[1]:"*"), join(" ",@{$v}[2..$#$v]));
     },
 
-    "crange" => sub { my($k,$v,$h) = @_;
+    "crange" => sub { my($k,$v,$h, $this) = @_;
 		      return "" unless(defined $v);
 		      return "$v" if(ref $v ne 'ARRAY');
+		      my $of = 946684800.0;
+		      # Here's a little fillip: gnuplot requires quotes around time ranges
+		      # if the corresponding axes are time data.  Handle that bizarre case.
+		      my $c = substr($k,0,1);
+
+		      if( (($this and $this->{options} and $this->{options}->{$c."data"}) // "" ) =~ m/time/ ) {
+			  print STDERR "WARNING: gnuplot-4.6.1 date range bug triggered.  Check the date scale.\n";
+			  return sprintf(" [%s:%s] ",((defined $v->[0])?"\"$v->[0]\"":""), ((defined $v->[1])?"\"$v->[1]\"":""));
+		      }
 		      return sprintf(" [%s:%s] ",((defined $v->[0])?$v->[0]:""), ((defined $v->[1])?$v->[1]:""));
     },
 
@@ -5080,7 +5195,7 @@ our $termTabSource = {
     'aifm'     => "Adobe Illustrator                      [NS: obsolete (use pdf)]",
     'amiga'    => "Amiga terminal driver                  [NS: ancient]",
     'apollo'   => "Apollo terminal driver                 [NS: ancient]",
-    'aqua'     => { unit=>'pt', desc=> 'Aqua terminal program on MacOS X (MacOS default device)',
+    'aqua'     => { unit=>'pt', desc=> 'Aqua terminal program on MacOS X (MacOS default device)', int=>1, ok=>1,
 		  opt=>[ qw/ output_ title size font enhanced / ]},
     'be'       => "BeOS/X11 (Ah, Be, how we miss thee)    [NS: ancient]",
     'canvas'   => { unit=>'pt', desc=> "Output Javascript Canvas rendering code.",
@@ -5121,7 +5236,7 @@ our $termTabSource = {
     'debug'  => "Gnuplot internal debugging mode        [NS: not useful]",
     'dospc'  => "Generic PC VESA/VGA/XGA direct display [NS: obsolete]",
     'dumb'   => {
-	unit=>'char',desc=>"dumb terminal (ASCII output)",
+	unit=>'char',desc=>"dumb terminal (ASCII output)",ok=>1,
 	opt=>[ ['feed','b','cf',"Issue (or not) a formfeed at the end of each plot"],
 			qw/ size enhanced output /]},
     'dxf'    => {unit=>'pt', desc=>"AutoCad 10.x interchange files",
@@ -5161,7 +5276,7 @@ our $termTabSource = {
 			['version',    's','cs', '(not documented in gnuplot manual)'],
 			'output']},
     'ggi'    => "X or SVGAlib output via GGIlib         [NS: obsolete]",
-    'gif'    => {unit=>'px',desc=>"Graphics Interchange Format (venerable but supported)",
+    'gif'    => {unit=>'px',desc=>"Graphics Interchange Format (venerable but supported)",ok=>1,
 		 opt=>[ qw/ transparent rounded butt linewidth dashlength font enhanced size crop /,
 			['animate','l','cl',"syntax: animate=>[delay=>\$d, loop=>\$n, (no)?optimize]"],
 			qw/ background output / ] },
@@ -5179,7 +5294,7 @@ our $termTabSource = {
     'hpljii' => "HP Laserjet Series II                  [NS: obsolete]",
     'hppj'   => "HP PaintJet and HP3630 printers        [NS: obsolete]",
     'imagen' => "Imagen laser printers                  [NS: obsolete]",
-    'jpeg'   => {unit=>"px",desc=>"JPEG image file output",
+    'jpeg'   => {unit=>"px",desc=>"JPEG image file output",ok=>1,
 		 opt=>[ qw/ interlace linewidth dashlength rounded butt font enhanced size crop background output /]},
     'kyo'    => "Kyocera laserprinter native format     [NS: obsolete]",
     'latex'  => {unit=>'in',desc=>"EPS output tailored for LaTeX (see also 'epslatex')",
@@ -5188,44 +5303,36 @@ our $termTabSource = {
 			['roman',   'b','cff','force font to Roman style (e.g. Times)'],
 			['fontsize','s','cv', 'set font size (in points)'],  # special entry 'coz latex wants no "fontsize" keyword.
 			qw/size rotate output/]},
-    'linux'  => {unit=>'px',desc=>"Render to a screen under Linux",
-		 opt=>['output']},
-    'lua'    => "Lua script output                      [NS: obsolete]",
-    'macintosh'=>{unit=>'px',desc=>"Direct rendered Macintosh window (MacOS X? Or earlier?)",
-		  opt=>[ ['gx',       'b','cf', 'Enable or disable gx (what is this?)'],
-			 ['singlewin','b','cff','Put output into a single window (oppose "multiwin")'],
-			 ['multiwin', 'b','cff','Allow multiple plot windows'],
-			 ['vertical', 'b','cf', 'rotate (or not) vertical text'],
-			 'size'
-		      ]},
-    'lua'    => "Lua script output                      [NS: obsolete]",
-    'mf'     => "Metafont output (plot as TeX glyph)    [NS: crazy]",
-    'mgr'    => "MGR window system                      [NS: obsolete]",
-    'mif'    => "FrameMaker MIF format v3.0             [NS: obsolete]",
-    'mp'     => "MetaPost metaformat for graphice       [NS: obsolete]",
-    'next'   => "NeXT (NeXTstep) file format (RIP Jobs) [NS: ancient]",
-    'openstep'=>"Openstep (NeXTStep followon)           [NS: obsolete]",
+    'linux'  =>  "Render to a Linux display dev (non-X)  [NS: obsolete]",
+    'lua'    =>  "Lua script output                      [NS: obsolete]",
+    'macintosh'=>"Direct rendered MacOS < 10 window      [NS: ancient]",
+    'mf'     =>  "Metafont output (plot as TeX glyph)    [NS: crazy]",
+    'mgr'    =>  "MGR window system                      [NS: obsolete]",
+    'mif'    =>  "FrameMaker MIF format v3.0             [NS: obsolete]",
+    'mp'     =>  "MetaPost metaformat for graphice       [NS: obsolete]",
+    'next'   =>  "NeXT (NeXTstep) file format (RIP Jobs) [NS: ancient]",
+    'openstep'=> "Openstep (NeXTStep followon)           [NS: obsolete]",
     'pbm' => {unit=>"px",desc=>"Portable BitMap format output",
 	      opt=>[ ['fontsize','s','cv','font size (in pixels/points)'],
 		     qw/monochrome color size output/]},
-    'pdf'    => {unit=>'in',desc=>"Portable Document Format output",
+    'pdf'    => {unit=>'in',desc=>"Portable Document Format output",ok=>1,
 		 opt=>[ qw/monochrome color enhanced font linewidth rounded butt solid dashed dashlength size output/ ]},
-    'pdfcairo'=>{unit=>'in',desc=>"PDF output via Cairo 2-D plotting library",
+    'pdfcairo'=>{unit=>'in',desc=>"PDF output via Cairo 2-D plotting library",ok=>1,
 		 opt=>[ 'enhanced',
 			['monochrome','b', sub{return $_[1]?" mono ":""},
 			                         "Generate a B/W plot (see 'color') if true"], # shield user from mono/monochrome
 			qw/color solid dashed font linewidth rounded butt dashlength size output/ ]},
     'pm'     => "OS/2 presentation manager              [NS: ancient]",
-    'png'    => {unit=>"px",desc=>"PNG image output",
+    'png'    => {unit=>"px",desc=>"PNG image output",ok=>1,
 		 opt=>[ qw/transparent interlace/,
 			['truecolor','b','cf','Enable or disable true color (RGB) output'],
 			qw/rounded butt linewidth dashlength tiny small medium large giant font enhanced size crop background output/]},
-    'pngcairo'=>{unit=>'px',desc=>"PNG image output via Cairo 2-D plotting library",
+    'pngcairo'=>{unit=>'px',desc=>"PNG image output via Cairo 2-D plotting library",ok=>1,
 		 opt=>[ 'enhanced',
 			['monochrome','b',sub{return $_[1]?" mono ":""},
 			                          "Generate a B/W plot (see 'color') if true"], # shield user from mono/monochrome
 			qw/color solid dashed transparent crop font linewidth rounded butt dashlength size output/ ]},
-    'postscript'=>{unit=>'in',desc=>"Postscript file output",
+    'postscript'=>{unit=>'in',desc=>"Postscript file output",ok=>1,
 		   opt=>[qw/landscape portrait/,
 			 ['eps',        'b','cff','Select encapsulated output (neither landscape nor portrait)'],
 			 'enhanced',
@@ -5251,7 +5358,7 @@ our $termTabSource = {
     'regis'   =>"REGIS graphics language output         [NS: obsolete]",
     'rgip'    =>"RGIP metafiles                         [NS: obsolete]",
     'sun'     =>"SUNView window system window           [NS: ancient]",
-    'svg'     =>{unit=>'in',desc=>"Scalable Vector Graphics (SVG) output",
+    'svg'     =>{unit=>'in',desc=>"Scalable Vector Graphics (SVG) output",ok=>1,
 		 opt=>[ qw/size enhanced font/,
 			['fontfile','s','cq','Font file to copy into the <defs> section of the SVG'],
 			qw/rounded butt solid dashed linewidth output/]},
@@ -5273,12 +5380,12 @@ our $termTabSource = {
 		 opt=>[ qw/color monochrome font title size/,
 			['position','l','csize','pixel location of the window'],
 			'output']},
-    'wxt'     =>{unit=>"px", mouse=>1,
+    'wxt'     =>{unit=>"px", mouse=>1,desc=>"WxWidgets display", mouse=>1,ok=>1,
 		 opt=>[ qw/size enhanced font title dashed solid dashlength persist raise/,
 			['ctrl',  'b','cf','enable (or disable) control-Q to quit window'],
 			['close', 'b','cf','close window on completion?']
                  ]},
-    'x11'     =>{unit=>"px",desc=>"X Windows display", mouse=>1,
+    'x11'     =>{unit=>"px",desc=>"X Windows display", mouse=>1,ok=>1,
 		 opt=>[ 'output_',
 			['title','s','cq','Window title (in title bar)'],
 			qw/enhanced font linewidth solid dashed persist raise/,
@@ -5316,10 +5423,11 @@ for my $k(keys %$termTabSource) {
 	}
 	$terminalOpt->{$name} = [ $line->[0], $line->[1], undef, $i++, $line->[2]];
     }
-
+    $terminalOpt->{"wait"} = [ 's' , sub { return "" }, undef, $i++, "wait time before throwing an error (default 5s)" ];
     $termTab->{$k} = { desc => $termTabSource->{$k}->{desc},
 		       unit => $termTabSource->{$k}->{unit},
 		       mouse => $termTabSource->{$k}->{mouse} // 0,
+		       int   => $termTabSource->{$k}->{int} // 0,
 		       opt  => [ $terminalOpt, 
 				 undef, # This gets filled in on first use in the constructor.
 				 "$k terminal options"
@@ -5331,8 +5439,11 @@ for my $k(keys %$termTabSource) {
 =for usage
 
     use PDL::Graphics::Gnuplot qw/terminfo/
-    terminfo
+    terminfo()
     terminfo 'aqua'
+
+    $w = gpwin();
+    $w->terminfo();
 
 =for ref
 
@@ -5343,46 +5454,58 @@ sessions.
 =cut
 
 sub terminfo {
-    my $terminal = shift || '';
+    shift() if( UNIVERSAL::isa($_[0],'PDL::Graphics::Gnuplot') );
 
-    $terminal = shift if($terminal =~ m/PDL::Graphics::Gnuplot/);
+    my $terminal = shift || '';
+    if((ref $terminal ? ref $terminal : $terminal) =~ m/PDL::Graphics::Gnuplot/) {
+	$terminal = shift;
+    }
+
+    my $brief_form = shift;
+    my $dont_print = shift;
+    my $s = "";
+
 
     if($termTabSource->{$terminal}) {
 	if(ref $termTabSource->{$terminal}) {
-	    print STDERR "Gnuplot terminal '$terminal': size default unit is '$termTabSource->{$terminal}->{unit}', options are:\n";
-	    for my $name(@{$termTabSource->{$terminal}->{opt}}) {
+	    $s = "Gnuplot terminal '$terminal': size default unit is '$termTabSource->{$terminal}->{unit}', options are:\n";
+	    my $tt = $termTab->{$terminal}->{opt}->[0];
+	    for my $name(sort {$tt->{$a}->[3] <=> $tt->{$b}->[3]} keys %$tt) {
 		my @info = ();
-
-		if(ref $name) {
-		    @info = ( $name->[0], $name->[3] );
-		} else {
-		    @info = ( $name, $termTab_types->{$name}->[2] );
-		}
+		@info = ($name, $tt->{$name}->[4]);
 		$info[0] =~ s/\_$//;         #remove trailing underscore on "output_" hack
-		printf STDERR "%10s - %s\n",@info;
+		$s .= sprintf "%10s - %s\n",@info;
 	    }
 	} else {
-	    print STDERR "PDL::Graphics::Gnuplot doesn't support '$terminal'.\n$termTabSource->{$terminal}\n";
+	    $s = "PDL::Graphics::Gnuplot doesn't support '$terminal'.\n$termTabSource->{$terminal}\n";
 	}
-	return;
+	print STDERR $s unless($dont_print);
+	return $s;
     }
     
     if($terminal && $terminal ne 'all'){
-	print STDERR "terminfo: terminal '$terminal' isn't recognized.  I'm listing all supported terminals instead.\n\n";
+	$s = "terminfo: terminal '$terminal' isn't recognized.  I'm listing all supported terminals instead.\n\n";
 	$terminal = '';
     }
 
     if(!$terminal || $terminal eq 'all') {
 
-	unless($terminal eq 'all') {
-	    print STDERR "('terminfo \"all\"' lists all known terminals, even those not supported)\n\n";
+	if(!$terminal && !$brief_form && !$dont_print) {
+	   $s .= "('terminfo \"all\"' lists all known terminals, even those not supported)\n\n";
 	}
 
-	print STDERR "Gnuplot terminals supported by PDL::Graphics::Gnuplot:\n";
-	
-	my $s = "";
+	$s .= "Gnuplot terminals supported by PDL::Graphics::Gnuplot:\n";
+
+	$s .= "\nDISPLAY TERMINALS ([M] indicates mouse input is supported)\n";
 	for my $k(sort keys %$termTab) {
-	    $s .= sprintf("%10s - %s\n",$k,$termTab->{$k}->{desc});
+	    next unless($termTab->{$k}->{int} || $termTab->{$k}->{mouse});
+	    $s .= sprintf("  %10s: %s %s\n",$k,$termTab->{$k}->{mouse} ? "[M]" : "   ", $termTab->{$k}->{desc});
+	}
+	
+	$s .= "\n\nFILE TERMINALS\n";
+	for my $k(sort keys %$termTab) {
+	    next if($termTab->{$k}->{int} || $termTab->{$k}->{mouse});
+	    $s .= sprintf("  %10s: %s %s\n",$k,"   ", $termTab->{$k}->{desc});
 	}
 
 	if($terminal eq 'all') {
@@ -5395,13 +5518,12 @@ sub terminfo {
 	    }
 	    $s .= "\n";
 	}
-	print STDERR $s;
-	return;
+	$s .= "\nRun PDL::Graphics::Gnuplot::terminfo( \$term_name ) for information on options.\n\n";
+	print STDERR $s unless($dont_print);
+	return $s;
     }
 
 }    
-		       
-		      
 
 ######################################################################
 ######################################################################
@@ -5462,7 +5584,7 @@ sub _startGnuplot
     if(!$this->{dumping}) {
 	print $in "show version\n";
 	do {
-	    if($errSelector->can_read(8)) {
+	    if($errSelector->can_read(8) or $MS_io_braindamage) {
 		my $byte;
 		sysread $err, $byte, 1;
 		$s .= $byte;
@@ -5515,16 +5637,25 @@ sub _killGnuplot {
     
     if( defined $this->{"pid-$suffix"})
     {
-	if( $this->{"stuck-$suffix"} )
-	{
-	    kill 'TERM', $this->{"pid-$suffix"};
-	}
-	else
-	{
-	    _printGnuplotPipe( $this, $suffix, "exit\n" );
-	}
+	my $goner = $this->{"pid-$suffix"};
+
+	# Since we have to deal with various contingencies including 
+	# a hosed-up gnuplot, we just jump straight to killin'.  
+	kill 'HUP', $goner;
+
+	# give it two seconds to quit nicely, then use the big guns.
+	local($SIG{ALRM}) = sub { kill 'KILL', $goner; };
+	alarm(2); 
+
+	# wait for it.  No WNOHANG since some platforms don't have it.
+	waitpid( $goner, 0 ) ;
+
+	# clear the alarm.
+	alarm(0); 
 	
-	waitpid( $this->{"pid-$suffix"}, 0 ) ;
+	# This clears the status bits from the killed process, so
+	# we don't report anomalous error when we finally exit.
+	$? = 0;  
     }
     
     for (map { $_."-$suffix" } qw/in err errSelector pid/) {
@@ -5540,10 +5671,10 @@ sub _printGnuplotPipe
   my $this   = shift;
   my $suffix = shift;
   my $string = shift;
-
+  my $data = shift;    # flag whether this transmission be data (0 for a command)
 
   # Autodetect the dump option
-  # If it get set or unset, restart gnuplot
+  # If it gets set or unset, restart gnuplot
   if(($this->{options}->{dump} && !$this->{dumping})  or  
      ($this->{dumping} && !$this->{options}->{dump})
       ) {
@@ -5559,7 +5690,15 @@ sub _printGnuplotPipe
   my $pipein = $this->{"in-$suffix"};
 
   syswrite($pipein,$string) unless($this->{dumping});
-  
+
+  # Mockup for half-duplex pty and pty mockups (e.g. testing Windows support)
+  if($debug_echo) {
+      my $k = "echobuffer-$suffix";
+      $this->{$k} = "" unless(defined($this->{$k}));
+      my $s = $string;
+      $s =~ s/^/gnuplot> /msg unless($data);
+      $this->{$k} .= $s;
+  }
   
   # Various debugging options. 
   if($this->{dumping}) {
@@ -5578,6 +5717,7 @@ sub _printGnuplotPipe
   if( $this->{options}{tee} )
   {
     my $len = length $string;
+    $string =~ s/[\000-\011\013-\014\016-\037\200-\377]/\?/g; 
     _logEvent($this,
               "Sent to child process (suffix $suffix) $len bytes==========\n" . $string . "\n=========================" );
   }
@@ -5593,9 +5733,12 @@ our $cp_serial = 0;
 sub _checkpoint {
     my $this   = shift;
     my $suffix = shift || "main";
-    my $notimeout = shift;
-    my $pipeerr = $this->{"err-$suffix"};
+    my $opt = shift // {};
+    my $notimeout = $opt->{notimeout} // 0;
+    my $printwarnings = (($opt->{printwarnings} // 0) and !($this->{options}->{silent} // 0));
     
+    my $pipeerr = $this->{"err-$suffix"};
+
     # string containing various options to this function
     my $flags = shift;
     
@@ -5615,16 +5758,33 @@ sub _checkpoint {
     return unless defined $pipeerr;
     
     my $fromerr = '';
+
     if( !($this->{dumping}) ) {
 	_logEvent($this, "Trying to read from gnuplot (suffix $suffix)") if $this->{options}{tee};
+
+	my $terminal =$this->{options}->{terminal};
+	my $delay = (($this->{'wait'}//0) + 0) || 5;
+
+	if($this->{"echobuffer-$suffix"}) {
+	    $fromerr = $this->{"echobuffer-$suffix"};
+	    $this->{"echobuffer-$suffix"} = "";
+	}
+	my $got_sigpipe =0 ;
+
+	local($SIG{PIPE}) = sub { $got_sigpipe = 1; };
+
+	my $now;
+	if($MS_io_braindamage) {
+	    $now = time;
+	    print "delay=$delay\n";
+	}
+
 	do
 	{ 
 	    # if no data received in a few seconds, the gnuplot process is stuck. This
 	    # usually happens if the gnuplot process is not in a command mode, but in
 	    # a data-receiving mode. I'm careful to avoid this situation, but bugs in
 	    # this module and/or in gnuplot itself can make this happen
-	    my $terminal =$this->{options}->{terminal};
-	    my $delay = ($terminal && $termTab->{$terminal}->{delay}) || 8;
 	    
 	    if( $this->{"errSelector-$suffix"}->can_read($notimeout ? undef : $delay) )
 	    {
@@ -5651,44 +5811,46 @@ although for some terminals (like x11) it could be because of a
 slow network.  If you don't think it is a network problem, please
 report it as a PDL::Graphics::Gnuplot bug.  You might be able to 
 ignore this message, or you might have to restart() the object.
+If you are getting this message spuriously, you might like to 
+set the "wait" terminal option to a longer value (in seconds).
 EOM
 	    }
-	} until $fromerr =~ /\s*(.*?)\s*$checkpoint.*$/ms;
+	} until ($fromerr =~ m/^$checkpoint/ms or $got_sigpipe or ($MS_io_braindamage and $now + $delay < time));;
+
+	if($got_sigpipe) {
+	    _killGnuplot($this);
+	    barf "PDL::Graphics::Gnuplot:  gnuplot process seems to have died (SIGPIPE received)\n";
+	}
 
 	_logEvent($this, "Read string '$fromerr' from gnuplot $suffix process") if $this->{options}{tee};
 
-	$fromerr = $1;
-    
-	my $warningre = qr{^(?:Warning:\s*(.*?)\s*$)\n?}m;
-	
-	if(defined $flags && $flags =~ /printwarnings/)
-	{
-	    while($fromerr =~ s/$warningre//gm)
-	    { print STDERR "Gnuplot warning: $1\n"; }
+	# Discard prompt-and-command lines up to the last prompt seen. 
+	# This is necessary for MS Windows support: MS Windows doesn't have 
+	# a notion of a tty versus other kind of pipe, so gnuplot always 
+	# prints prompts and echoes commands.  Since there isn't much in the 
+	# way of error syntax, we might miss a few errors this way.  Oh well.
+	if($MS_io_braindamage) {
+	    $fromerr =~ s/.*(gnu|multi)plot\>[^\n\r]*$//msg;
 	}
 	
+	# Strip the checkpoint message.
+	$fromerr =~ s/\s*(.*?)\s*$checkpoint.*$/$1/ms;
 	
-	# I've now read all the data up-to the checkpoint. Strip out all the warnings
-	$fromerr =~ s/$warningre//gm;
-    
-	# Grab everything after the first prompt
-	if( $fromerr =~ m/^((gnu|multi)plot\>.*)/ms) {
-	    $fromerr = $1;
-	}
-
-
 	# Replace non-printable ASCII characters with '?'
-	$fromerr =~ s/[\000-\011\013-\014\016-\037\200-\377]/\?/g;
-	
-	if($fromerr =~ m/^\s+\^\s*$/m) {
+	# (preserve ^I [tab], ^J [newline], and ^M [return])
+	$fromerr =~ s/[\000-\010\013-\014\016-\037\200-\377]/\?/g;
+
+	# Find, report, and strip warnings.
+	my $warningre = qr{^(?:Warning:\s*(.*?)\s*$)\n?}m;
+	while( $fromerr =~ s/$warningre//gm) {
+	    print STDERR "Gnuplot warning: $1\n" if( $printwarnings );
+	}
+
+	if($fromerr =~ m/^\s+\^\s*$/m or $fromerr=~ m/^\s*line/) {
 	    if($this->{early_gnuplot}) {
-		print STDERR "WARNING the deprecated pre-v$gnuplot_req_v gnuplot backend issued an error:\n";
+		barf "PDL::Graphics::Gnuplot: ERROR: the deprecated pre-v$gnuplot_req_v gnuplot backend issued an error:\n$fromerr\n";
 	    } else {
-		print STDERR "WARNING: the gnuplot backend issued an error:\n";
-	    }
-	    print STDERR $fromerr."\n";
-	    if($this->{early_gnuplot}) {
-		print STDERR "Please try this command with gnuplot >= v$gnuplot_req_v before griping about it.\n";
+	        barf "PDL::Graphics::Gnuplot: ERROR: the gnuplot backend issued an error:\n$fromerr\n";
 	    }
 	}
 		       
@@ -5960,17 +6122,33 @@ Dima Kogan, C<< <dima@secretsauce.net> >> and Craig DeForest, C<< <craig@defores
 
 =item - options to "with" selection: accept a list ref instead of a string with args
 
+=item - labels need attention (plot option labels)
+
+They need to be handled as hashes, not just as array refs.  Also, they don't seem to be working with timestamps.
+Further, deeply nested options (e.g. "at" for labels) need attention.
+
 =back
-
-=item - labels need attention 
-
-Should they be handled as hashes? Further, deeply nested options (e.g. "at" for labels) need attention.
 
 =item - new plot styles
 
 The "boxplot" plot style (new to 4.6?) requires a different using syntax and will require some hacking to support.
 
+=item - ephemeral state isn't.
+
+Ephemeral plot options leave state behind in the underlying gnuplot process.  Following each plot with a reset() 
+doesn't do what you really want.  Start each plot with a reset()?  Hold default values in the parse table?
+
 =back
+
+=head1 RELEASE NOTES
+
+=head2 v1.1
+
+- Handles communication with command echo on the pipe (for Microsoft Windows)
+
+- Better gnuplot error reporting
+
+- Fixed date range handling
 
 =head1 LICENSE AND COPYRIGHT
 
