@@ -1,6 +1,6 @@
 #!perl
 
-use Test::More tests => 87;
+use Test::More tests => 96;
 
 BEGIN {
     use_ok( 'PDL::Graphics::Gnuplot', qw(plot) ) || print "Bail out!\n";
@@ -14,7 +14,6 @@ use PDL::Graphics::Gnuplot;
 # Uncomment these to test error handling on Microsoft Windows, from within POSIX....
 # $PDL::Graphics::Gnuplot::debug_echo = 1;
 # $PDL::Graphics::Gnuplot::MS_io_braindamage = 1;
-
 diag( "Testing PDL::Graphics::Gnuplot $PDL::Graphics::Gnuplot::VERSION, Perl $], $^X" );
 
 my $x = sequence(5);
@@ -44,6 +43,8 @@ our (undef, $testoutput) = tempfile('pdl_graphics_gnuplot_test_XXXXXXX');
   unlink $testoutput;
 }
 
+ok($PDL::Graphics::Gnuplot::gp_version, "gp_version is nonzero after first use of P::G::G");
+
 ##############################
 #
 {
@@ -65,17 +66,22 @@ our (undef, $testoutput) = tempfile('pdl_graphics_gnuplot_test_XXXXXXX');
 # 
 my $w;
 
-{
+SKIP:{
     # Check timeout.
     eval {
 	 $w = gpwin( 'dumb', size=>[79,24],output=>$testoutput, wait=>1);
     };
     ok((!$@ and (ref $w)), "constructor works");
+
+    skip "Skipping timeout test, which doesn't work under MS Windows", 1
+	if($PDL::Graphics::Gnuplot::MS_io_braindamage);
+
     eval {
 	$w->plot ( { topcmds=>'pause 2'}, with=>'line', $x); };
 
     ok($@ && $@ =~ m/1 second/og, "gnuplot response timeout works" );
 }
+
 
 ##############################
 { 
@@ -88,6 +94,7 @@ my $w;
     undef $w;
     ok("destructor worked OK\n");
 }
+
 
 ##############################
 # Test options parsing
@@ -162,9 +169,12 @@ ok(!$@," plot works");
 open FOO,"<$testoutput";
 @lines = <FOO>;
 close FOO;
-unlink $testoutput;
-
 ok(@lines == 24, "test plot made 24 lines");
+
+eval { $w->restart(); };
+ok(!$@,"restart succeeded");
+
+unlink $testoutput;
 ok(!(-e $testoutput), "test file got deleted");
 
 
@@ -282,11 +292,12 @@ ok(!$@, "2-D plot with one variable parameter takes three PDLs");
 eval { $w->plot(with=>'points pointsize variable',xvals(10),xvals(10),xvals(10),xvals(10)) };
 ok($@ =~ m/Found 4 PDLs for 2D/, "2-D plot with one variable parameter rejects four PDLs");
 
-eval { $w->plot3d(xvals(10)); };                                   
-ok($@ =~ m/Image plot types require/, "3-D plot rejects one PDL if it isn't an image");
-
-eval { $w->plot3d(xvals(10,10))};
-ok(!$@, "3-D plot accepts one PDL if it is an image");
+SKIP: do {
+    skip "Skipping unsupported mode for deprecated earlier gnuplot",1  
+	if($PDL::Graphics::Gnuplot::gp_version < 4.4);
+    eval { $w->plot3d(xvals(10,10))};
+    ok(!$@, "3-D plot accepts one PDL if it is an image");
+};
 
 eval { $w->plot3d(xvals(10),xvals(10)); };
 ok($@ =~ m/Found 2 PDLs for 3D/,"3-D plot rejects two PDLs");
@@ -303,8 +314,12 @@ ok(!$@, "3-D plot accepts four PDLs with one variable element");
 eval { $w->plot3d(with=>'points pointsize variable palette',xvals(10),xvals(10),xvals(10),xvals(10));};
 ok($@ =~ m/Found 4 PDLs for 3D/,"3-D plot rejects four PDLs with two variable elements");
 
-eval { $w->plot3d(with=>'points pointsize variable palette',xvals(10),xvals(10),xvals(10),xvals(10),xvals(10));};
-ok(!$@, "3-D plot accepts five PDLs with one variable element");
+SKIP: do {
+    skip "Skipping unsupported mode for deprecated earlier gnuplot",1  
+	if($PDL::Graphics::Gnuplot::gp_version < 4.4);
+    eval { $w->plot3d(with=>'points pointsize variable palette',xvals(10),xvals(10),xvals(10),xvals(10),xvals(10));};
+    ok(!$@, "3-D plot accepts five PDLs with one variable element");
+}    ;
 
 eval { $w->plot3d(with=>'points pointsize variable palette',xvals(10),xvals(10),xvals(10),xvals(10),xvals(10),xvals(10));};
 ok($@ =~ m/Found 6 PDLs for 3D/,"3-D plot rejects six PDLs with two variable elements");
@@ -441,9 +456,8 @@ SKIP: {
     print STDERR "See a double helix plot with variable point sizes and variable color? (Y/n)";
     $a = <STDIN>;
     ok($a !~ m/n/i, "double helix plot is OK");
-
-
 }
+
 
 ##############################
 # Mousing tests
@@ -492,6 +506,45 @@ ok($lines1 eq $lines2,  "Setting the time range to what it would be anyway dupli
 ok($lines2 cmp $lines3, "Modifying the time range modifies the graph");
 }
 
-unlink $testoutput;
 
+##############################
+# Check that title setting/unsetting works OK
+eval { $w->reset; $w->plot({title=>"This is a plot title"},with=>'points',xvals(5));};
+ok(!$@, "Title plotting works, no error");
+
+open FOO,"<$testoutput";
+@lines = <FOO>;
+close FOO;
+
+ok($lines[1] =~ m/This is a plot title/, "Plot title gets placed on plot");
+
+eval { $w->plot({title=>""},with=>'points',xvals(5));};
+ok(!$@, "Non-title plotting works, no error");
+
+open FOO,"<$testoutput";
+@lines = <FOO>;
+close FOO;
+ok($lines[1] =~ m/^\s*$/, "Setting empty plot title sets an empty title");
+
+
+##############################
+# Check that 3D plotting of grids differs from threaded line plotting
+eval { $w->plot({trid=>1,title=>""},with=>'lines',sequence(3,3)); };
+ok(!$@, "3-d grid plot with single column succeeded");
+open FOO,"<$testoutput";
+$lines = join("",<FOO>);
+close FOO;
+
+eval { $w->plot({trid=>1,title=>""},with=>'lines',cdim=>1,sequence(3,3));};
+ok(!$@, "3-d threaded plot with single column succeeded");
+open FOO,"<$testoutput";
+$lines2 = join("",<FOO>);
+close FOO;
+
+ok( $lines2 ne $lines, "the two 3-D plots differ");
+ok( ($lines2 =~ m/\#/) and ($lines !~ m/\#/) , "the threaded plot has traces the grid lacks");
+
+
+undef $w;
+unlink $testoutput;
 

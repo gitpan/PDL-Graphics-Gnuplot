@@ -115,8 +115,11 @@ of the Gnuplot backend.
 
 Gnuplot recognizes both hard-copy and interactive plotting devices,
 and on interactive devices (like X11) it is possible to pan, scale,
-and rotate both 2-D and 3-D plots interactively.  You can also enter 
-graphical data through mouse clicks on the device window.
+and rotate both 2-D and 3-D plots interactively.  You can also enter
+graphical data through mouse clicks on the device window.  On some
+hardcopy devices (e.g. "PDF") that support multipage output, it is
+necessary to close the device after plotting to ensure a valid file is
+written out.
 
 The main subroutine that C<PDL::Graphics::Gnuplot> exports by default
 is C<gplot()>, which produces one or more overlain plots and/or images
@@ -130,6 +133,13 @@ A call to C<gplot()> looks like:
  gplot({temp_plot_options}, # optional hash or array ref
       curve_options, data, data, ... ,
       curve_options, data, data, ... );
+
+The data entries are columns to be plotted.  They are normally
+an optional ordinate and a required abscissa, but some plot modes 
+can use more columns than that.  The collection of columns is called
+a "tuple".  Each column must be a separate PDL or an ARRAY ref.  If
+all the columns are PDLs, you can add extra dimensions to make threaded
+collections of curves.
 
 PDL::Graphics::Gnuplot also implements an object oriented
 interface. Plot objects track individual gnuplot subprocesses.  Direct
@@ -151,7 +161,10 @@ to scaled labels.  Individual plots can be 2-D or 3-D, and different sets
 of plot styles are supported in each mode.  Plots can be sent to a variety
 of devices; see the description of plot options, below.
 
-You select a plot style with the "with" curve option, as in
+You select a plot style with the "with" curve option, and feed in columns
+of data (usually ordinate followed by abscissa).  The collection of columns
+is called a "tuple".  These plots have two columns in their tuples:
+
 
  $x = xvals(51)-25; $y = $x**2;
  gplot(with=>'points', $x, $y);  # Draw points on a parabola
@@ -164,8 +177,7 @@ Normal threading rules apply across the arguments to a given plot.
 
 All data are required to be supplied as either PDLs or list refs.
 If you use a list ref as a data column, then normal
-threading is disabled and all arguments must be 1-D and contain the 
-same number of elements.  For example:
+threading is disabled.  For example:
 
  $x = xvals(5);
  $y = xvals(5)**2;
@@ -173,6 +185,8 @@ same number of elements.  For example:
  gplot(with=>'labels',$x,$y,$labels);
 
 See below for supported curve styles.
+
+=head3 Modifying plots
 
 Gnuplot is built around a monolithic plot model - it is not possible to 
 add new data directly to a plot without redrawing the entire plot. To support
@@ -194,10 +208,34 @@ this will plot X vs. sqrt(X):
  $y->inplace->sqrt;
  $w->replot($x,$y);
 
+=head3 Image plotting
+
+Several of the plot styles accept image data.  The tuple parameters work the
+same way as for basic plots, but each "column" is a 2-D PDL rather than a 1-D PDL.
+As a special case, the "with image" plot style accepts either a 2-D or a 3-D PDL.
+If you pass in 3-D PDL, the extra dimension can have size 1, 3, or 4.  It is interpreted
+as running across (R,G,B,A) color planes.  
+
+=head3 3-D plotting
+
+You can plot in 3-D by setting the plot option C<trid> to a true value.  Three
+dimensional plots accept either 1-D or 2-D PDLs as data columns.  If you feed
+in 2-D "columns", many of the common plot styles will generalize appropriately 
+to 3-D.  For example, to plot a 2-D surface as a line grid, you can use the "lines"
+style and feed in 2-D columns instead of 1-D columns.  
+
 =head2 Plot styles supported
 
 Gnuplot itself supports a wide range of plot styles, and all are supported by 
-PDL::Graphics::Gnuplot.  They are:
+PDL::Graphics::Gnuplot.  Most of the basic plot styles collect tuples of 1-D columns
+in 2-D mode (for ordinary plots), or either 1-D or 2-D "columns" in 3-D mode (for 
+grid surface plots and such).  Image modes always collect tuples made of 2-D "columns".
+
+You can pass in 1-D columns as either PDLs or ARRAY refs.  That is important for 
+plot types (such as "labels") that require a collection of strings rather than 
+numeric data.
+
+The GNuplot plot styles supported are:
 
 =over 3
 
@@ -302,16 +340,18 @@ lines, as in:
 
 =head2 Data arguments
 
-Following the curve options in the C<plot()> argument list is the actual data
-being plotted. Each output data point is a "tuple" whose size varies depending on
-what is being plotted. For example if we're making a simple 2D x-y plot, each
-tuple has 2 values; if we're making a 3d plot with each point having variable
-size and color, each tuple has 5 values (x,y,z,size,color). Each tuple element 
-must be passed separately.  For ordinary (non-curve) plots, the 0 dim of the 
-tuple elements runs across plotted point.  PDL threading is active, so multiple 
-curves with similar curve options can be plotted by stacking data inside the 
-passed-in PDLs.  (An exception is that threading is disabled if one or more of 
-the data elements is a list ref).
+Following the curve options in the C<plot()> argument list is the
+actual data being plotted. Each output data point is a "tuple" whose
+size varies depending on what is being plotted. For example if we're
+making a simple 2D x-y plot, each tuple has 2 values; if we're making
+a 3d plot with each point having variable size and color, each tuple
+has 5 values (x,y,z,size,color). Each tuple element must be passed
+separately.  For ordinary 2-D plots, the 0 dim of the tuple elements
+runs across plotted point.  PDL threading is active, so you can plot
+multiple curves with similar curve options on a normal 2-D plot, just
+by stacking data inside the passed-in PDLs.  (An exception is that
+threading is disabled if one or more of the data elements is a list
+ref).
 
 =head3 A simple example
 
@@ -339,13 +379,14 @@ a 3-tuple: X, Y, and R.
 
 =head3 A complicated example:
 
-   my $pi    = 3.14159;
-   my $theta = xvals(201) * 6 * $pi / 200;
-   my $z     = xvals(201) * 5 / 200;
+   $pi    = 3.14159;
+   $theta = xvals(201) * 6 * $pi / 200;
+   $z     = xvals(201) * 5 / 200;
 
-   plot( {'3d' => 1, title => 'double helix'},
+   gplot( {trid => 1, title => 'double helix'},
          {with => 'linespoints pointsize variable pointtype 2 palette',
          legend => ['spiral 1','spiral 2']} ,
+         cdim=>1,
          pdl( cos($theta), -cos($theta) ),       # x
          pdl( sin($theta), -sin($theta) ),       # y
          $z,                                     # z
@@ -355,16 +396,18 @@ a 3-tuple: X, Y, and R.
          zeroes(6),                         # x
          zeroes(6),                         # y
          xvals(6),                          # z
-         xvals(6)+1,                        # point size
-         {size=>'xyz equal'}
+         xvals(6)+1                         # point size
    );
 
 This is a 3d plot with variable size and color. There are 5 values in
 the tuple.  The first 2 piddles have dimensions (N,2); all the other
-piddles have a single dimension. Thus the PDL threading generates 2
+piddles have a single dimension. The "cdim=>1" specifies that each column
+of data should be one-dimensional. Thus the PDL threading generates 2
 distinct curves, with varying values for x,y and identical values for
 everything else.  To label the curves differently, 2 different sets of
-curve options are given.
+curve options are given.  Omitting the "cdim" curve option would yield 
+a 201x2 grid with the "linespoints" plotstyle, rather than two separate 
+curves.
 
 In addition to the threaded pair of linespoints curves, there are six 
 variable size points plotted as filled squares, as a secondary curve.
@@ -504,6 +547,13 @@ convenience.
 
 =head2 POs for Output: terminal, termoption, output, device, hardcopy
 
+You can send plots to a variety of different devices; Gnuplot calls 
+devices "terminals".  With the object-oriented interface, you must set
+the output device with the constructor C<PDL::Graphics::Gnuplot::new> 
+(or the exported constructor C<gpwin>) or the C<output> method.  If you
+use the simple non-object interface, you can set the output with the 
+C<terminal>, C<termoption>, and C<output> plot options.
+
 C<terminal> sets the output device type for Gnuplot, and C<output> sets the 
 actual output file or window number.  
 
@@ -518,7 +568,7 @@ For finer grained control of the plotting environment, you can send
 plot options, you can include terminal options by interpolating them 
 into a string, as in C<terminal jpeg interlace butt crop>, or you can
 use the constructor C<new> (also exported as C<gpwin>), which parses
-terminal options as an argument list.  
+terminal options as an argument list. 
 
 The routine C<PDL::Graphics::Gnuplot::terminfo> prints a list of all
 availale terminals or, if you pass in a terminal name, options accepted
@@ -1226,9 +1276,13 @@ Specifies the style for this curve. The value is passed to gnuplot
 using its 'with' keyword, so valid values are whatever gnuplot
 supports.  See below for a list of supported curve styles.
 
-=item y2
+=item axes
 
-If true, requests that this curve be plotted on the y2 axis instead of the main y axis
+Lets you specify which X and/or Y axes to plot on.  Gnuplot supports
+a main and alternate X and Y axis.  You specify them as a packed string
+with the x and y axes indicated: for example, C<x1y1> to plot on the main
+axes, or C<x1y2> to plot using an alternate Y axis (normally gridded on
+the right side of the plot).
 
 =item tuplesize
 
@@ -1237,6 +1291,25 @@ don't need to set this as individual C<with> styles implicitly set a
 tuple size (which is automatically extended if you specify additional
 modifiers such as C<palette> that require more data); this option 
 lets you override PDL::Graphics::Gnuplot's parsing in case of irregularity.
+
+=item cdims 
+
+Specifies the dimensions of of each column in this curve's tuple.  It must 
+be 0, 1, or 2.   Normally you don't need to set this for most plots; the 
+main use is to specify that a 2-D data PDL is to be interpreted as a collection
+of 1-D columns rather than a single 2-D grid (which would be the default
+in a 3-D plot). For example:
+
+    $w=gpwin();
+    $r2 = rvals(21,21)**2;
+    $w->plot3d( wi=>'lines', xvals($r2), yvals($r2), $r2 );
+
+will produce a grid of values on a paraboloid. To instead plot a collection
+of lines using the threaded syntax, try
+
+    $w->plot3d( wi=>'lines', cd=>1, xvals($r2), yvals($r2), $r2 );
+
+which will plot 21 separate curves in a threaded manner.
 
 =back
 
@@ -1359,10 +1432,15 @@ To send any plot to a file, instead of to the screen, one can simply do
   plot(hardcopy => 'output.pdf',
        $x, $y);
 
-The C<hardcopy> option is a shorthand for the C<terminal> and C<output>
-options. If more control is desired, the latter can be used. For example to
-generate a PDF of a particular size with a particular font size for the text,
-one can do
+The C<hardcopy> option is a shorthand for the C<terminal> and
+C<output> options. The output device is chosen from the file name
+suffix.  
+
+If you want more (any) control over the output options (e.g. page
+size, font, etc.) then you can specify the output device using the
+C<ouput> method or the constructor itself -- or the corresponding plot
+options in the non-object mode. For example, to generate a PDF of a
+particular size with a particular font size for the text, one can do
 
   plot(terminal => 'pdfcairo solid color font ",10" size 11in,8.5in',
        output   => 'output.pdf',
@@ -1370,6 +1448,20 @@ one can do
 
 This command is equivalent to the C<hardcopy> shorthand used previously, but the
 fonts and sizes can be changed.
+
+Using the object oriented mode, you could instead say:
+
+  $w = gpwin();
+  $w->plot( $x, $y );
+  $w->output( pdfcairo, solid=>1, color=>1,font=>',10',size=>[11,8.5,'in'] );
+  $w->replot();
+  $w->close();
+
+Many hardcopy output terminals (such as C<pdf> and C<svg>) will not 
+dump their plot to the file unless the file is explicitly closed with a 
+change of output device or a call to C<reset>, C<restart>, or C<close>.
+This is because those devices support multipage output and also require 
+and end-of-file marker to close the file.
 
 =head1 Methods 
 
@@ -1387,8 +1479,8 @@ use IPC::Run;
 use IO::Select;
 use Symbol qw(gensym);
 use Time::HiRes qw(gettimeofday tv_interval);
-
-our $VERSION = '1.1';
+our $VERSION = '1.2';
+our $gp_version = undef;   # eventually gets the extracted gnuplot(1) version number.
 
 use base 'Exporter';
 our @EXPORT_OK = qw(plot plot3d line lines points image terminfo reset restart replot);
@@ -2033,7 +2125,7 @@ sub plot
 	$chunks->[$i]->{binaryCurveFlag} = $chunks->[$i]->{binaryWith} // $binary_mode;
 
 	# Everything else is an image fix
-	next if( !($chunks->[$i]->{imgFlag}) );
+	next if( $chunks->[$i]->{cdims} != 2 );
 	
 	# Fix up gnuplot ranging bug for images
 	if(defined($this->{options}->{xrange}) and !defined($chunks->[$i]->{options}->{xrange})) {
@@ -2051,20 +2143,33 @@ sub plot
 
 	    # Neither curve nor plot option has been set.  
 	    if($chunks->[$i]->{ArrayRec} eq 'array') {
-		# Autorange using matrix locations -- pixels overlap by 0.5 on bottom and top.
-		$chunks->[$i]->{options}->{xrange} = [ -0.5, $chunks->[$i]->{data}->[0]->dim(1) - 0.5 ];
-		$chunks->[$i]->{options}->{yrange} = [ -0.5, $chunks->[$i]->{data}->[0]->dim(2) - 0.5 ];
+		# Autorange using matrix locations -- pixels lop over the edge by 0.5 on bottom and top for
+		# image data, but not at all for vector data
+		if($chunks->[$i]->{imgFlag}) {
+		    $chunks->[$i]->{options}->{xrange} = [ -0.5, $chunks->[$i]->{data}->[0]->dim(1) - 0.5 ];
+		    $chunks->[$i]->{options}->{yrange} = [ -0.5, $chunks->[$i]->{data}->[0]->dim(2) - 0.5 ];
+		} else {
+		    # Not an image - just use the minmax, and don't pad
+		    $chunks->[$i]->{options}->{xrange} = [ 0, $chunks->[$i]->{data}->[0]->dim(1) - 1 ];
+		    $chunks->[$i]->{options}->{yrange} = [ 0, $chunks->[$i]->{data}->[0]->dim(2) - 1 ];
+		}
 	    } else {
 		# Autorange using x and y ranging -- sleaze out of matching gnuplot's algorithm by
 		# calculating dx and dy.
 		my($xmin,$xmax) = $chunks->[$i]->{data}->[0]->slice("(0)")->minmax;
 		my($ymin,$ymax) = $chunks->[$i]->{data}->[0]->slice("(1)")->minmax;
 		
-		my $dx = ($xmax-$xmin) / $chunks->[$i]->{data}->[0]->dim(1) * 0.5;
-		$chunks->[$i]->{options}->{xrange} = [$xmin - $dx, $xmax + $dx];
-		
-		my $dy = ($ymax-$ymin) / $chunks->[$i]->{data}->[0]->dim(2) * 0.5;
-		$chunks->[$i]->{options}->{yrange} = [$ymin - $dy, $ymax + $dy];
+		if($chunks->[$i]->{imgFlag}) {
+		    my $dx = ($xmax-$xmin) / $chunks->[$i]->{data}->[0]->dim(1) * 0.5;
+		    $chunks->[$i]->{options}->{xrange} = [$xmin - $dx, $xmax + $dx];
+		    
+		    my $dy = ($ymax-$ymin) / $chunks->[$i]->{data}->[0]->dim(2) * 0.5;
+		    $chunks->[$i]->{options}->{yrange} = [$ymin - $dy, $ymax + $dy];
+		} else {
+		    # Not an image - just use the minmax, and don't pad
+		    $chunks->[$i]->{options}->{xrange} = [$xmin,$xmax];
+		    $chunks->[$i]->{options}->{yrange} = [$ymin,$ymax];
+		}
 	    }
 	}
 	
@@ -2152,7 +2257,7 @@ sub plot
 
     ##########
     # Generate the plot command with the fences in it instead of data specifiers. 
-    # (The fences are emitted in _emitOpts and contained in the clobal $cmdFence)
+    # (The fences are emitted in _emitOpts and contained in the global $cmdFence)
     my $plotcmd =  ($this->{options}->{'3d'} ? "splot " : "plot ") . 
 	join( ", ", 
 	      map { 
@@ -2184,7 +2289,7 @@ sub plot
     for my $i(0..$#plotcmds){
 	my($pchunk, $tchunk);
 	
-	if( $chunks->[$i]->{imgFlag} ) {
+	if( $chunks->[$i]->{cdims} == 2 ) {
 	    # It's an image -- always use binary to push the image out.
 
 	    unless( $binary_mode ) {
@@ -2202,7 +2307,6 @@ sub plot
 	    } ( join(",", ($chunks->[$i]->{data}->[0]->slice("(0)")->dims)),
 		join(",", (("1") x ($chunks->[$i]->{data}->[0]->ndims - 1)))
 	      );
-
 	    # Mock up test data - just a single data point for each (8 is the size of an IEEE double)
 	    $chunks->[$i]->{testdata} = "." x ($chunks->[$i]->{tuplesize} * 8);
 
@@ -2271,7 +2375,7 @@ sub plot
 	if(defined $checkpointMessage && $checkpointMessage !~ /^$postTestplotCheckpoint/m)
 	{
 	    $checkpointMessage =~ s/$print_checkpoint//;
-	    barf "Gnuplot error: \"$checkpointMessage\" while sending plot cmd \"$testcmd\"";
+	    barf "Gnuplot error: \"$checkpointMessage\" while syntax-checking the plot cmd \"$testcmd\"";
 	}
     }
 
@@ -2282,7 +2386,13 @@ sub plot
     _printGnuplotPipe( $this, "main", $plotOptionsString);
     my $optionsWarnings = _checkpoint($this, "main", {printwarnings=>1});
     if($optionsWarnings) {
-	barf( "The gnuplot process returned an error during plot setup:$optionsWarnings\n\n");
+	if($MS_io_braindamage) {
+	    # MS Windows can yield some chatter on the line, and it's not necessarily an
+	    # error.  So we don't barf, we only warn. Blech.
+	    print STDERR "WARNING: the gnuplot process gave some unexpected chatter:\n$optionsWarnings\n\n";
+	} else {
+	    barf( "The gnuplot process returned an error during plot setup:$optionsWarnings\n\n");
+	}
     }
     
     ##############################
@@ -2295,7 +2405,7 @@ sub plot
     for my $chunk(@$chunks){
 	my $p;
 
-	if($chunk->{imgFlag}) {
+	if($chunk->{cdims}==2) {
 	    # Currently all images are sent binary
 	    $p = $chunk->{data}->[0]->double->copy;
 	    $last_plotcmd .= " [ ".length(${$p->get_dataref})." bytes of binary image data ]\n";
@@ -2349,7 +2459,18 @@ sub plot
 	
     my $plotWarnings = _checkpoint($this, "main", {printwarnings=>1});
     if($plotWarnings) {
-	barf("the gnuplot process returned an error during plotting: $plotWarnings\n\n");
+	if($MS_io_braindamage) {
+	    # MS Windows can yield some chatter on the line, and it's not necessarily an
+	    # error.  So we don't barf, we only warn. Blech.
+	    print STDERR "WARNING: the gnuplot process gave some unexpected chatter:\n$plotWarnings\n\n";
+	} else {
+	    barf("the gnuplot process returned an error during plotting: $plotWarnings\n\n");
+	}
+    }
+
+    if($MS_io_braindamage) {
+	_printGnuplotPipe($this,"main", "\r\n"x256); # Send a bunch of return carriages to get a prompt.
+	_checkpoint($this,"main",{printwarnings=>1});
     }
 
     ##############################
@@ -2387,7 +2508,13 @@ sub plot
     _printGnuplotPipe($this, "main", $cleanup_cmd);
     $checkpointMessage= _checkpoint($this, "main", {printwarnings=>1});
     if($checkpointMessage) {
-	barf "Gnuplot error: \"$checkpointMessage\" after sending cleanup cmd \"$cleanup_cmd\"\n";
+	if($MS_io_braindamage) {
+	    # MS Windows can yield some chatter on the line, and it's not necessarily an
+	    # error.  So we don't barf, we only warn.  Blech.
+	    print STDERR "WARNING: the gnuplot process gave some unexpected chatter after plot cleanup:\n$checkpointMessage\n";
+	} else {
+	    barf "Gnuplot error: \"$checkpointMessage\" after sending cleanup cmd \"$cleanup_cmd\"\n";
+	}
     }
     
     # read and report any warnings that happened during the plot
@@ -2578,14 +2705,22 @@ sub plot
 
 	    ##############################
 	    # Implicit dimensions in 3-D plots require imgFlag to be set...
-	    $imgFlag |= ($tuplematch[0]<0 && !!$is3d) if(defined($tuplematch[0]));
+	    my $cdims;
+	    if($chunk{options}->{cdims}) {
+		$cdims = $chunk{options}->{cdims};
+		if($cdims==1 and $imgFlag) {
+		    barf("You specified column dimension of 1 for an image plot type! Not allowed.");
+		}
+	    } else {
+		$cdims = ($imgFlag or ( $is3d && $dataPiddles[0]->ndims >= 2 )) ? 2 : 1;
 
+	    }
 
 	    ##############################
 	    # A little aside:  streamline the common optimization case -- 
 	    # if the user specified "image" but handed in an RGB or RGBA image, 
 	    # bust it up into components and update the 'with' accordingly.
-	    if( $imgFlag ) {
+	    if( $cdims==2 ) {
 		if($chunk{options}->{with}->[0] eq 'image') {
 
 		    my $dp = $dataPiddles[$#dataPiddles];
@@ -2603,6 +2738,7 @@ sub plot
 		    }
 		}
 	    }
+	    $chunk{cdims} = $cdims;
 
 	    $chunk{tuplesize} = @dataPiddles;
 	    
@@ -2617,16 +2753,17 @@ sub plot
 	    my $ncurves;
 
 	    if($imgFlag){
-		# Images should never get a label unless one is explicitly set
-		$chunk{options}->{legend} = undef unless( exists($chunk{options}->{legend}) );
-		$spec_legends = 1;
-
-		# For the image case glom everything together into one 3-dimensional PDL, 
-		# pre-inverted so that the 0 dim runs across column.
-		
-		if($imgFlag and $dataPiddles[0]->dims < 2) {
+		if($dataPiddles[0]->dims < 2) {
 		    barf "Image plot types require at least a 2-D input PDL\n";
 		}
+	    }
+
+	    # For the image case glom everything together into one 3-dimensional PDL, 
+	    # pre-inverted so that the 0 dim runs across column.
+	    if($cdims==2) {
+		# Surfaces never get a label unless one is explicitly set
+		$chunk{options}->{legend} = undef unless( exists($chunk{options}->{legend}) );
+		$spec_legends = 1;
 
 		my $p = pdl(@dataPiddles);
 
@@ -2638,7 +2775,7 @@ sub plot
 		}
 
 		if( ($p->dims > 3) ) {
-		    barf("PDL::Graphics::Gnuplot::plot: I can't make sense of this dimensional mix -- \n  I ended up with (".join("x",$p->dims).") data after combining everything. \n   (Did you mix list and PDL-stack formulations?)\n");
+		    barf("PDL::Graphics::Gnuplot::plot: I can't make sense of this dimensional mix -- \n  I ended up with (".join("x",$p->dims).") data after combining everything. \n   (Did you mix list and PDL-stack formulations, or try to thread 2-D columns?)\n");
 		}
 
 		# Place the PDL onto the argument stack.
@@ -2658,6 +2795,20 @@ sub plot
 		# curves) into separate chunks of one curve each.
 
 		$ncurves = $dataPiddles[0]->slice("(0)")->nelem;
+
+		# Speed bump for weird case
+		our $bigthreads;
+		if($ncurves >= 100 and !$bigthreads) {
+		    print STDERR <<"FOO"
+PDL::Graphics::Gnuplot: WARNING - you seem to be plotting $ncurves
+curves in a single threaded collection.  This could be because you fed
+in a 2-D (or higher) data set when you meant to plot a single curve.
+If so, you may want to flatten your data and try again. (To disable
+this message, set \$PDL::Graphics::Gnuplot::bigthreads to be true).
+If you are trying to plot a surface, you might try setting 'trid=>1'
+in the plot options.
+FOO
+		}
 
 		if($chunk{options}->{legend} and 
 		   @{$chunk{options}->{legend}} and 
@@ -2780,7 +2931,6 @@ sub plot
 		    $data[$i] = $data[$i]->slice( join(",",@s) );
 		}
 	    }
-	    
 	    return @data;
 	} else {
 	    # At least one of the data columns is a non-PDL.  Force them to be simple columns, and
@@ -2937,8 +3087,21 @@ sub image {
     local($this->{options}->{'globalwith'}) = ["image"];
     plot($this, @_);
 }
-    
 
+=head2 fits
+
+=for ref
+
+Displays a FITS image 
+
+=cut
+
+sub fits {
+    my $this = _obj_or_global(\@_);
+    local($this->{options}->{'globalwith'}) = ["fits"];
+    plot($this,@_);
+}
+    
 ##############################
 # Multiplot support
 
@@ -3032,7 +3195,6 @@ our $mpOptionsTable = {
 our $mpOptionsAbbrevs = _gen_abbrev_list(keys %$mpOptionsTable);
 our $mpOpt = [$mpOptionsTable, $mpOptionsAbbrevs, "multiplot option"];
 		       
-
 sub multiplot {
     my $this = _obj_or_global(\@_);
     my @params = @_;
@@ -3052,15 +3214,18 @@ sub multiplot {
 			       'termoption' => $this->{options}->{termoption}
 			     },
 			     $pOpt);
-    my $test_preamble = "set terminal dumb\nset output \" \"\n";
-
     my $checkpointMessage;
     if($check_syntax){
+	my $test_preamble = "set terminal dumb\nset output \" \"\n";
 	$PDL::Graphics::Gnuplot::last_testcmd = $test_preamble . $command;
 	_printGnuplotPipe( $this, "syntax", $test_preamble . $command);
 	$checkpointMessage = _checkpoint($this, "syntax");
 	if($checkpointMessage) {
-	    barf("Gnuplot error: \"$checkpointMessage\" while sending multiplot command.");
+	    if($MS_io_braindamage) {
+		print STDERR "WARNING: unexpected chatter while sending multiplot command:\n$checkpointMessage\n\n";
+	    } else {
+		barf("Gnuplot error: \"$checkpointMessage\" while sending multiplot command.");
+	    }
 	} 
     }
     
@@ -3068,7 +3233,11 @@ sub multiplot {
     _printGnuplotPipe( $this, "main", $preamble . $command);
     $checkpointMessage = _checkpoint($this,"main");
     if($checkpointMessage){
-	barf("Gnuplot error: \"$checkpointMessage\" while sending final multiplot command.");
+	if($MS_io_braindamage) {
+	    print STDERR "WARNING: unexpected chatter while sending final multiplot command:\n$checkpointMessage\n\n";
+	} else {
+	    barf("Gnuplot error: \"$checkpointMessage\" while sending final multiplot command.");
+	}
     }
     
     $this->{options}->{multiplot} = 1;
@@ -3094,7 +3263,11 @@ sub end_multi {
     _printGnuplotPipe($this, "main", "unset multiplot\n");
     $checkpointMessage = _checkpoint($this, "main");
     if($checkpointMessage) {
-	barf("Gnuplot error: unset multiplot failed!\n$checkpointMessage");
+	if($MS_io_braindamage) {
+	    print STDERR "WARNING: unexpected chatter after unset multiplot:\n$checkpointMessage\n";
+	} else {
+	    barf("Gnuplot error: unset multiplot failed!\n$checkpointMessage");
+	}
     }
 
     $this->{options}->{multiplot} = 0;
@@ -4070,6 +4243,14 @@ our $cOptionsTable = {
          # data is here so that it gets sorted properly into each chunk -- but it doesn't get specified this way.
          # the output string just specifies STDIN.   The magic output string gets replaced post facto with the test and
          # real output format specifiers.
+    'cdims'     => [sub { my $s = $_[1] // 0;  # Number of dimensions in a column
+			  if($s==0 or $s==1 or $s==2) {
+			      return $s;
+			  } else {
+			      barf "Curve option 'cdims' must be one of 0, 1, or 2\n";
+			  }
+		    },			  
+		    sub { return ""}],
     'data'     => [sub { barf "mustn't specify data as a curve option...\n" },
 		   sub { return " $cmdFence "; },
 		   undef,5
@@ -4377,7 +4558,7 @@ $_pOHInputs = {
 
     ## one-line list (can also be boolean)
     'l' => sub { return undef unless(defined $_[1]);
-		 return 0 unless($_[1]);                              # false value yields false
+		 return "" unless(length($_[1]));                                 # false value yields false
 		 return $_[1] if( (!ref($_[1])) && "$_[1]" =~ m/^\s*\-?\d+\s*$/); # nonzero integers yield true
 		 # Not setting a boolean value - it's a list (or a trivial list).
 		 if(ref $_[1] eq 'ARRAY') {
@@ -4822,7 +5003,7 @@ our $_OptionEmitters = {
     'ql' => 
 		    sub { my($k,$v,$h) = @_;
 			  unless(ref $v eq 'ARRAY') {
-			      return ($v?"":"un")."set $k $v\n";
+			      return ( (length($v) eq 0) ? "unset $k\n" : "set $k \"$v\"\n");
 			  }
 			  my $quoted = $v->[0];
 			  return sprintf('set %s "%s" %s%s',$k,$quoted,join(" ",@{$v}[1..$#$v]),"\n");
@@ -5580,7 +5761,7 @@ sub _startGnuplot
     ## This uses the same chintzy read-one-byte-at-a-time logic as checkpoint --
     ## it's more or less cut-and-pasted from there
     my $s = "";
-    my $version;
+    our $gp_version;
     if(!$this->{dumping}) {
 	print $in "show version\n";
 	do {
@@ -5599,11 +5780,11 @@ EOM
 	    }
 	} until($s =~ m/Version (.*) patchlevel/i);
 	
-	$version = $1;
+	$gp_version = $1;
 
-	if($version < $gnuplot_req_v) {
+	if($gp_version < $gnuplot_req_v) {
 	    print STDERR <<"EOM"
-WARNING: Gnuplot version ($version) is earlier than recommended ($gnuplot_req_v).
+WARNING: Gnuplot version ($gp_version) is earlier than recommended ($gnuplot_req_v).
 Proceed with caution.  (data xfer is now ASCII by default; this will slow things
 down a bit.  Images may not work.  Some plot styles may not work.)
 EOM
@@ -5626,11 +5807,12 @@ EOM
 sub _killGnuplot {
     my $this = shift;
     my $suffix = shift;
+    my $kill_it_dead = shift;
 
     unless(defined($suffix)) {
 	for my $k(keys %$this) {
 	    next unless $k =~ m/^pid\-(.*)$/;
-	    _killGnuplot($this,$1);
+	    _killGnuplot($this,$1, $kill_it_dead);
 	}
 	return;
     }
@@ -5639,19 +5821,24 @@ sub _killGnuplot {
     {
 	my $goner = $this->{"pid-$suffix"};
 
-	# Since we have to deal with various contingencies including 
-	# a hosed-up gnuplot, we just jump straight to killin'.  
-	kill 'HUP', $goner;
+	# Try Mr. Nice Guy first.
+	unless($kill_it_dead) {
+	    _printGnuplotPipe($this,$suffix,"exit\n");
+	}
 
-	# give it two seconds to quit nicely, then use the big guns.
-	local($SIG{ALRM}) = sub { kill 'KILL', $goner; };
-	alarm(2); 
-
-	# wait for it.  No WNOHANG since some platforms don't have it.
-	waitpid( $goner, 0 ) ;
-
-	# clear the alarm.
-	alarm(0); 
+	# give it three seconds to quit nicely, then start shooting.
+	local($SIG{ALRM}) = sub { kill 'HUP',$goner; };
+	alarm(3);
+	my $z = waitpid($goner, 0);
+	alarm(0);
+	
+	unless($z) {
+	    # give it two more seconds to die gracefully, then use the big guns.
+	    local($SIG{ALRM}) = sub { kill 'KILL', $goner; };
+	    alarm(2); 
+	    waitpid( $goner, 0 ) ;
+	    alarm(0); 
+	}
 	
 	# This clears the status bits from the killed process, so
 	# we don't report anomalous error when we finally exit.
@@ -5769,34 +5956,35 @@ sub _checkpoint {
 	    $fromerr = $this->{"echobuffer-$suffix"};
 	    $this->{"echobuffer-$suffix"} = "";
 	}
-	my $got_sigpipe =0 ;
 
-	local($SIG{PIPE}) = sub { $got_sigpipe = 1; };
+	my $subproc_gone = 0 ;
 
-	my $now;
-	if($MS_io_braindamage) {
-	    $now = time;
-	    print "delay=$delay\n";
-	}
+	local($SIG{PIPE}) = sub { our $subproc_gone = 1; };
 
 	do
 	{ 
-	    # if no data received in a few seconds, the gnuplot process is stuck. This
-	    # usually happens if the gnuplot process is not in a command mode, but in
-	    # a data-receiving mode. I'm careful to avoid this situation, but bugs in
-	    # this module and/or in gnuplot itself can make this happen
+	    # if no data received in a few seconds, the gnuplot
+	    # process is stuck. This usually happens if the gnuplot
+	    # process is not in a command mode, but in a
+	    # data-receiving mode. I'm careful to avoid this
+	    # situation, but bugs in this module and/or in gnuplot
+	    # itself can make this happen
+	    #
+	    # Note that the nice asynchronous part of this loop won't
+	    # work on Microsoft Windows, since that OS doesn't have a
+	    # working asynchronous read, and can_read doesn't work
+	    # either.
 	    
-	    if( $this->{"errSelector-$suffix"}->can_read($notimeout ? undef : $delay) )
+	    if( $MS_io_braindamage or 
+		$this->{"errSelector-$suffix"}->can_read($notimeout ? undef : $delay )
+		)
 	    {
-		# read a byte into the tail of $fromerr. I'd like to read "as many bytes
-		# as are available", but I don't know how to this in a very portable way
-		# (I just know there will be windows users complaining if I simply do a
-		# non-blocking read). Very little data will be coming in anyway, so
-		# doing this a byte at a time is (these days) an irrelevant inefficiency
 		my $byte;
 		sysread $pipeerr, $byte, 1;
 		$fromerr .= $byte;
-		
+		if($byte eq \004 or $byte eq \000 or !length($byte)) {
+		    $subproc_gone = 1;
+		}
 	    }
 	    else
 	    {
@@ -5815,11 +6003,16 @@ If you are getting this message spuriously, you might like to
 set the "wait" terminal option to a longer value (in seconds).
 EOM
 	    }
-	} until ($fromerr =~ m/^$checkpoint/ms or $got_sigpipe or ($MS_io_braindamage and $now + $delay < time));;
+	} until ($fromerr =~ m/^$checkpoint/ms or $subproc_gone);
 
-	if($got_sigpipe) {
-	    _killGnuplot($this);
-	    barf "PDL::Graphics::Gnuplot:  gnuplot process seems to have died (SIGPIPE received)\n";
+	if($MS_io_braindamage) {
+	    # Fix newline braindamage too
+	    $fromerr =~ s/\r\n/\n/g;
+	}
+
+	if($subproc_gone) {
+	    _killGnuplot($this, undef, 1);
+	    barf "PDL::Graphics::Gnuplot: the gnuplot process seems to have died.\n";
 	}
 
 	_logEvent($this, "Read string '$fromerr' from gnuplot $suffix process") if $this->{options}{tee};
@@ -5830,7 +6023,7 @@ EOM
 	# prints prompts and echoes commands.  Since there isn't much in the 
 	# way of error syntax, we might miss a few errors this way.  Oh well.
 	if($MS_io_braindamage) {
-	    $fromerr =~ s/.*(gnu|multi)plot\>[^\n\r]*$//msg;
+	    $fromerr =~ s/^[\s\r]*(gnu|multi)plot\>[^\n\r]*$//msg;
 	}
 	
 	# Strip the checkpoint message.
@@ -5846,7 +6039,13 @@ EOM
 	    print STDERR "Gnuplot warning: $1\n" if( $printwarnings );
 	}
 
-	if($fromerr =~ m/^\s+\^\s*$/m or $fromerr=~ m/^\s*line/) {
+	# Anything else is an error -- except on Microsoft Windows where we 
+	# get additional chaff on the channel.  Try to take it out.
+	if($MS_io_braindamage) {
+	    $fromerr =~ s/^Terminal type set to \'[^\']*\'.*Options are \'[^\']*\'//o;
+	}
+
+	if($fromerr =~ m/^\s+\^\s*$/ms or $fromerr=~ m/^\s*line/ms) {
 	    if($this->{early_gnuplot}) {
 		barf "PDL::Graphics::Gnuplot: ERROR: the deprecated pre-v$gnuplot_req_v gnuplot backend issued an error:\n$fromerr\n";
 	    } else {
@@ -6149,6 +6348,17 @@ doesn't do what you really want.  Start each plot with a reset()?  Hold default 
 - Better gnuplot error reporting
 
 - Fixed date range handling
+
+=head2 v1.2
+
+- Handles communication better on Microsoft Windows (MSW has brain damage).
+
+- Improvements in documentation
+
+- Handles PDF output in scripts
+
+- Handles 2-D and 1-D columns in 3-D plots (grid vs. threaded lines)
+
 
 =head1 LICENSE AND COPYRIGHT
 
