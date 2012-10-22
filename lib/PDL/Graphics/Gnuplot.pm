@@ -1,3 +1,5 @@
+use 5.010;  # uses modern constructs like "//".
+
 ##############################
 #
 # PDL::Graphics::Gnuplot
@@ -1479,7 +1481,7 @@ use IPC::Run;
 use IO::Select;
 use Symbol qw(gensym);
 use Time::HiRes qw(gettimeofday tv_interval);
-our $VERSION = '1.2';
+our $VERSION = '1.3';
 our $gp_version = undef;   # eventually gets the extracted gnuplot(1) version number.
 
 use base 'Exporter';
@@ -2563,7 +2565,7 @@ sub plot
 	my @chunks;
 	my $Ncurves  = 0;
 	my $argIndex = 0;
-	
+
 	while($argIndex <= $#args)
 	{
 	    # First, I find and parse the options in this chunk
@@ -2587,9 +2589,17 @@ sub plot
 	    map { delete $lastOptions->{$_} } qw/legend xrange yrange zrange x2range y2range/;
 
 	    my %chunk;
-	    $chunk{options} = dclone( 
-		_parseOptHash( $lastOptions, $cOpt, @args[$argIndex..$nextDataIdx-1] )
-		);
+	    eval {
+		$chunk{options} = dclone( 
+		    _parseOptHash( $lastOptions, $cOpt, @args[$argIndex..$nextDataIdx-1] )
+		    );
+	    };
+	    if($@){
+		unless(@chunks){
+		    barf "$@\n(Did you mix plot options and curve options at the beginning of the arg list?)\n\n";
+		}
+		barf "$@\n";
+	    }
 
 	    $chunk{options}->{data}="dummy"; # force emission of the data field
 
@@ -5826,9 +5836,35 @@ sub _killGnuplot {
 	    _printGnuplotPipe($this,$suffix,"exit\n");
 	}
 
-	# give it three seconds to quit nicely, then start shooting.
-	local($SIG{ALRM}) = sub { kill 'HUP',$goner; };
-	alarm(3);
+	# give it 20 seconds to quit nicely, then start shooting.
+
+	my $countdown = 20;
+
+	local($SIG{INT}) = sub {
+	    kill 'HUP', $goner;
+	    alarm(0);
+	    $countdown = -1;
+	};
+
+	local($SIG{ALRM}) = sub { 
+	    return if($countdown<0);
+	    $countdown--;
+	    if($countdown==16){
+		print STDERR "Waiting for gnuplot...";
+	    } 
+	    if($countdown < 17) {
+		print STDERR $countdown." ";
+	    }
+	    if($countdown > 0) {
+		alarm(1);
+	    } else {
+		kill 'HUP', $goner;
+		alarm(0);
+	    }
+	};
+
+	alarm(1);
+
 	my $z = waitpid($goner, 0);
 	alarm(0);
 	
@@ -6341,15 +6377,17 @@ doesn't do what you really want.  Start each plot with a reset()?  Hold default 
 
 =head1 RELEASE NOTES
 
-=head2 v1.1
+=head3 v1.3 
 
-- Handles communication with command echo on the pipe (for Microsoft Windows)
+- Specifies Perl 5.010 or higher to run
 
-- Better gnuplot error reporting
+- Tests do not fail on v4.2 Gnuplot (still used on BSD)
 
-- Fixed date range handling
+- Better error messages in common error cases
 
-=head2 v1.2
+- Several Microsoft Windows compatibility fixes (thanks, Sisyphus!)
+
+=head3 v1.2
 
 - Handles communication better on Microsoft Windows (MSW has brain damage).
 
@@ -6358,6 +6396,15 @@ doesn't do what you really want.  Start each plot with a reset()?  Hold default 
 - Handles PDF output in scripts
 
 - Handles 2-D and 1-D columns in 3-D plots (grid vs. threaded lines)
+
+=head3 v1.1
+
+- Handles communication with command echo on the pipe (for Microsoft Windows)
+
+- Better gnuplot error reporting
+
+- Fixed date range handling
+
 
 
 =head1 LICENSE AND COPYRIGHT

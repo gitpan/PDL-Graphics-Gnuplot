@@ -1,4 +1,4 @@
-use 5.008;
+use 5.010;
 use strict;
 use warnings;
 use ExtUtils::MakeMaker;
@@ -18,7 +18,7 @@ sub parseversion
 
 # make sure we can run gnuplot before continuing
 {
-  unless( open( my $pipe, '|-', 'gnuplot' ))
+  unless(`gnuplot -V`)
   {
     print STDERR <<EOM;
 
@@ -90,3 +90,4 @@ if(exists $ARGV[0] && $ARGV[0] eq 'README.pod')
     { print README; }
   }
 }
+
