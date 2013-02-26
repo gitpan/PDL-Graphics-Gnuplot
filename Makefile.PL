@@ -1,4 +1,3 @@
-use 5.010;
 use strict;
 use warnings;
 use ExtUtils::MakeMaker;
@@ -47,23 +46,45 @@ sub MY::libscan
     return $self->SUPER::libscan ($file);
 }
 
+sub MY::postamble {
+    my $text = <<'FOO';
+install ::
+	@echo "Updating PDL documentation database...";
+	@$(PERL) -e "use PDL::Doc; eval { PDL::Doc::add_module(q{PDL::Graphics::Gnuplot}); }; ";
+
+FOO
+    return $text;
+}
+
 WriteMakefile(
     NAME                => 'PDL::Graphics::Gnuplot',
-    AUTHOR              => q{Dima Kogan <dima@secretsauce.net>},
+    AUTHOR              => 'Craig DeForest <craig@deforest.org>, Dima Kogan <dkogan@secretsauce.net>',
     VERSION             => parseversion(),
     ABSTRACT_FROM       => 'lib/PDL/Graphics/Gnuplot.pm',
     ($ExtUtils::MakeMaker::VERSION >= 6.3002
-      ? ('LICENSE'=> 'perl')
-      : ()),
-    PREREQ_PM => { 'Test::More' => 0,
-                   'PDL'        => 0,
-                   'IPC::Run'   => 0
-                 },
+     ? ('LICENSE'=> 'perl')
+     : ()),
+    PREREQ_PM => { 'Test::More'  => 0,
+                   'PDL'         => 0,
+                   'IPC::Run'    => 0,
+		   'List::Util'  => 0,
+		   'Storable'    => 0,
+		   'IPC::Open3'  => 0,
+		   'IO::Select'  => 0,
+		   'Time::HiRes' => 0
+    },
+    META_ADD => {
+	resources => {
+	    homepage => 'http://github.com/drzowie/PDL-Graphics-Gnuplot',
+	    repository => 'git://github.com/drzowie/PDL-Graphics-Gnuplot.git',
+	    bugtracker => 'http://rt.cpan.org/Public/Dist/Display.html?Name=PDL-Graphics-Gnuplot'
+	}
+    },		  
+
     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
     clean               => { FILES => 'PDL-Graphics-Gnuplot-*' },
-);
-
-
+	);
+	
 # reroute the main POD into a separate README.pod if requested. This is here
 # purely to generate a README.pod for the github front page
 my $POD_header = <<EOF;

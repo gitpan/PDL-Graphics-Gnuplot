@@ -5,17 +5,22 @@
 #    use PDL::Demos::Screen;
 #    do 'Gnuplot_demo.pm';
 #    PDL::Demos::Gnuplot_demo::run();
-
+#
+# Authors: Dima Kogan & Craig DeForest
 
 package PDL::Demos::Gnuplot_demo;
 
 use PDL;
 use PDL::Graphics::Gnuplot;
+use PDL::ImageND;
+
+use PDL::Demos::Screen;   # This is awful but seems to be needed since Screen.pm is where the Routines are located. -CED 2/2013
 
 PDL::Demos::Routines->import();
 sub comment($);
 sub act($);
 sub output;
+
 
 sub run {
     local($PDL::debug) = 0;

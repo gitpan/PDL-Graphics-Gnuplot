@@ -1,24 +1,33 @@
---- #YAML:1.0
-name:               PDL-Graphics-Gnuplot
-version:            1.3
-abstract:           Gnuplot-based plotting for PDL
+---
+abstract: 'Gnuplot-based plotting for PDL'
 author:
-    - Dima Kogan <dima@secretsauce.net>
-license:            perl
-distribution_type:  module
-configure_requires:
-    ExtUtils::MakeMaker:  0
+  - 'Craig DeForest <craig@deforest.org>, Dima Kogan <dkogan@secretsauce.net>'
 build_requires:
-    ExtUtils::MakeMaker:  0
-requires:
-    IPC::Run:    0
-    PDL:         0
-    Test::More:  0
-no_index:
-    directory:
-        - t
-        - inc
-generated_by:       ExtUtils::MakeMaker version 6.56
+  ExtUtils::MakeMaker: 0
+configure_requires:
+  ExtUtils::MakeMaker: 0
+dynamic_config: 1
+generated_by: 'ExtUtils::MakeMaker version 6.62, CPAN::Meta::Converter version 2.112150'
+license: perl
 meta-spec:
-    url:      http://module-build.sourceforge.net/META-spec-v1.4.html
-    version:  1.4
+  url: http://module-build.sourceforge.net/META-spec-v1.4.html
+  version: 1.4
+name: PDL-Graphics-Gnuplot
+no_index:
+  directory:
+    - t
+    - inc
+requires:
+  IO::Select: 0
+  IPC::Open3: 0
+  IPC::Run: 0
+  List::Util: 0
+  PDL: 0
+  Storable: 0
+  Test::More: 0
+  Time::HiRes: 0
+resources:
+  bugtracker: http://rt.cpan.org/Public/Dist/Display.html?Name=PDL-Graphics-Gnuplot
+  homepage: http://github.com/drzowie/PDL-Graphics-Gnuplot
+  repository: git://github.com/drzowie/PDL-Graphics-Gnuplot.git
+version: 1.4
