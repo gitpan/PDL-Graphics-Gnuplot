@@ -1,6 +1,6 @@
 #!perl
 
-use Test::More tests => 128;
+use Test::More tests => 156;
 
 BEGIN {
     use_ok( 'PDL::Graphics::Gnuplot', qw(plot) ) || print "Bail out!\n";
@@ -318,10 +318,10 @@ ok(!$@, "2-D line plot accepts two PDLs");
 eval { $w->plot(xvals(10),xvals(10),xvals(10));};
 ok($@ =~ m/Found 3 PDLs for 2D plot type/, "2-D line plot rejects three PDLs");
 
-eval { $w->plot(with=>'points pointsize variable',xvals(10),xvals(10),xvals(10)) };
+eval { $w->plot(ps=>'variable',with=>'points',xvals(10),xvals(10),xvals(10)) };
 ok(!$@, "2-D plot with one variable parameter takes three PDLs");
 
-eval { $w->plot(with=>'points pointsize variable',xvals(10),xvals(10),xvals(10),xvals(10)) };
+eval { $w->plot(ps=>'variable',with=>'points',xvals(10),xvals(10),xvals(10),xvals(10)) };
 ok($@ =~ m/Found 4 PDLs for 2D/, "2-D plot with one variable parameter rejects four PDLs");
 
 SKIP: {
@@ -340,20 +340,20 @@ ok(!$@, "3-D plot accepts three PDLs");
 eval { $w->plot3d(xvals(10),xvals(10),xvals(10),xvals(10)); };
 ok($@ =~ m/Found 4 PDLs for 3D/,"3-D plot rejects four PDLs");
 
-eval { $w->plot3d(with=>'points pointsize variable',xvals(10),xvals(10),xvals(10),xvals(10));};
+eval { $w->plot3d(ps=>'variable',with=>'points',xvals(10),xvals(10),xvals(10),xvals(10));};
 ok(!$@, "3-D plot accepts four PDLs with one variable element");
 
-eval { $w->plot3d(with=>'points pointsize variable palette',xvals(10),xvals(10),xvals(10),xvals(10));};
+eval { $w->plot3d(with=>'points',ps=>'variable',palette=>1,xvals(10),xvals(10),xvals(10),xvals(10));};
 ok($@ =~ m/Found 4 PDLs for 3D/,"3-D plot rejects four PDLs with two variable elements");
 
 SKIP: {
     skip "Skipping unsupported mode for deprecated earlier gnuplot",1  
 	if($PDL::Graphics::Gnuplot::gp_version < 4.4);
-    eval { $w->plot3d(with=>'points pointsize variable palette',xvals(10),xvals(10),xvals(10),xvals(10),xvals(10));};
+    eval { $w->plot3d(with=>'points',ps=>'variable',palette=>1,xvals(10),xvals(10),xvals(10),xvals(10),xvals(10));};
     ok(!$@, "3-D plot accepts five PDLs with one variable element");
 }    ;
 
-eval { $w->plot3d(with=>'points pointsize variable palette',xvals(10),xvals(10),xvals(10),xvals(10),xvals(10),xvals(10));};
+eval { $w->plot3d(with=>'points',ps=>'variable',palette=>1,xvals(10),xvals(10),xvals(10),xvals(10),xvals(10),xvals(10));};
 ok($@ =~ m/Found 6 PDLs for 3D/,"3-D plot rejects six PDLs with two variable elements");
 
 
@@ -476,8 +476,8 @@ unlink($testoutput) or warn "\$!: $!";
 
 SKIP: {
     unless(exists($ENV{GNUPLOT_INTERACTIVE})) {
-	print STDERR "\n\n******************************\nSkipping 24 interactive tests.\n    Set the environment variable GNUPLOT_INTERACTIVE to enable them.\n******************************\n\n";
-	skip "Skipping interactive tests - set env. variable GNUPLOT_INTERACTIVE to enable.",24;
+	print STDERR "\n\n******************************\nSkipping 27 interactive tests.\n    Set the environment variable GNUPLOT_INTERACTIVE to enable them.\n******************************\n\n";
+	skip "Skipping interactive tests - set env. variable GNUPLOT_INTERACTIVE to enable.",27;
     }
 
     eval { $w = gpwin('wxt'); };
@@ -524,10 +524,10 @@ SKIP: {
 	ok(1,"skipping interactive-zoom test");
     }
 
-    eval { $w->reset; $w->plot( {title => "Parabola with error bars"},
+    eval { $w->reset; $w->options(binary=>0,tee=>1); $w->plot( {title => "Parabola with error bars"},
 				with=>"xyerrorbars", legend=>"Parabola",
 				$x**2 * 10, abs($x)/10, abs($x)*5 ); };
-    
+    print $PDL::Graphics::Gnuplot::last_plotcmd."\n";
         print STDERR "\n\nAre there error bars in both X and Y, both increasing away from the apex, wider in X than Y? (Y/n)";
     $a = <STDIN>;
     ok($a !~ m/n/i, "error bars are OK");
@@ -631,26 +631,64 @@ FOO
     $a = <STDIN>;
     ok($a !~ m/n/i, "image/line ranging plot is OK");
 
-    if($w->{terminal} eq 'x11') {
-	print STDERR "\n\nClick in the window.\n";
-	eval { my $h = $w->read_mouse(); };
-	print STDERR "\n\n$@\n\n" if($@);
-	ok(!$@);
-    } else {
-	ok(1,"Skipping click test for non-x11 device");
-    }
-    
-    # Try with a new window
-    $w=gpwin($w->{terminal}); 
-    eval { print $w->read_mouse(); };
-    ok($@ =~ m/no existing/,"Trying to read the mouse input on an empty window doesn't work");
+    if($PDL::Bad::Status) {
+	eval { 
+	    $w = gpwin();
+	    $w->multiplot(layout=>[2,1]);
+	    $a = xvals(11)**2; 
+	    $a->slice("(5)") .= asin(pdl(1.1));
+	    $b = (xvals(11)**2)->setbadif(xvals(11)==5);
+	    print "a=$a\n";
+	    print "b=$b\n";
+	    $w->options(xlab=>"X", ylab=>"Y");
+	    $w->line($a, {title=>"Parabola with NaN at x=5"});
+	    $w->line($b, {title=>"Parabola with BAD at x=5"});
+	    $w->end_multi;
+	};
 
-}
+	ok(!$@, "bad value plot succeeded");
+	print $@ if($@);
+	print STDERR <<"FOO";
+
+The two panels should have the same plot with different titles:  Y=X**2, 
+with a segment missing from X=4 to X=6.  OK?
+FOO
+$a = <STDIN>;
+	ok($a !~ m/n/i, "bad value plot looks OK");
+    } else {
+	ok(1, "Skipping bad-value test since this PDL doesn't support badvals");
+	ok(1, "Skipping bad-value test since this PDL doesn't support badvals");
+    }
 
 
 ##############################
 # Mousing tests
 #
+
+    if( $ENV{DISPLAY}  and  $PDL::Graphics::Gnuplot::valid_terms->{x11} ) {
+	eval { $w=gpwin(x11); $w->image(rvals(9,9), {title=>"X11 window for mouse test"}) };
+	ok(!$@, "plotting to x11 window worked.");
+
+	print STDERR "\n\nClick in the X11 window for mouse test.\n";
+	eval { my $h = $w->read_mouse(); };
+	print STDERR "\n\n$@\n\n" if($@);
+	ok(!$@, "Mouse test read a click");
+
+	# Try with a new window
+	$w=gpwin($w->{terminal}); 
+	eval { print $w->read_mouse(); };
+	ok($@ =~ m/no existing/,"Trying to read the mouse input on an empty window doesn't work");
+	
+    } else {
+	ok(1,"Skipping x11 plot");
+	ok(1,"Skipping click test for non-x11 device");
+	ok(1,"Skipping mouse input test for non-x11 device");
+    }
+    
+
+}
+
+
 
 
 ##############################
@@ -720,20 +758,25 @@ SKIP:{
 
 ##############################
 # Check that 3D plotting of grids differs from threaded line plotting
-eval { $w->plot({trid=>1,title=>""},with=>'lines',sequence(3,3)); };
-ok(!$@, "3-d grid plot with single column succeeded");
-open FOO,"<$testoutput";
-$lines = join("",<FOO>);
-close FOO;
+SKIP:{
+    skip "Skipping 3-D plots since gnuplot is ancient",4
+	if($w->{gp_version} < $PDL::Graphics::Gnuplot::gnuplot_req_v);
 
-eval { $w->plot({trid=>1,title=>"",yr=>[-1,1]},with=>'lines',cdim=>1,sequence(3,3));};
-ok(!$@, "3-d threaded plot with single column succeeded");
-open FOO,"<$testoutput";
-$lines2 = join("",<FOO>);
-close FOO;
-
-ok( $lines2 ne $lines, "the two 3-D plots differ");
-ok( ($lines2 =~ m/\#/) && ($lines !~ m/\#/) , "the threaded plot has traces the grid lacks");
+    eval { $w->plot({trid=>1,title=>""},with=>'lines',sequence(3,3)); };
+    ok(!$@, "3-d grid plot with single column succeeded");
+    open FOO,"<$testoutput";
+    $lines = join("",<FOO>);
+    close FOO;
+    
+    eval { $w->plot({trid=>1,title=>"",yr=>[-1,1]},with=>'lines',cdim=>1,sequence(3,3));};
+    ok(!$@, "3-d threaded plot with single column succeeded");
+    open FOO,"<$testoutput";
+    $lines2 = join("",<FOO>);
+    close FOO;
+    
+    ok( $lines2 ne $lines, "the two 3-D plots differ");
+    ok( ($lines2 =~ m/\#/) && ($lines !~ m/\#/) , "the threaded plot has traces the grid lacks");
+}
 
 ##############################
 # Test rudimentary polar plots
@@ -749,4 +792,96 @@ ok(!$@, "spherical plotting in radians was parsed OK (abbrevs in enums too)");
 undef $w;
 unlink($testoutput) or warn "\$!: $!";
 
+##############################
+##############################
+## Test aspects of the parsers...
+$w = gpwin();
+
+eval { $w->options(xrange=>pdl(1,2)) };
+ok(!$@, "xrange accepts a PDL option");
+
+ok( (ref($w->{options}->{xrange}) eq 'ARRAY'   and 
+    $w->{options}->{xrange}->[0] == 1         and
+    $w->{options}->{xrange}->[1] == 2
+     ),
+    "xrange parses a 2-PDL into a list ref");
+
+eval { $w->options(xrange=>pdl(1,2,3)) };
+ok($@, "xrange rejects a PDL with more than 2 elements");
+
+eval {$w->options(xrange=>[21]);};
+ok(!$@, "xrange accepts a single list element");
+
+ok( (  ref($w->{options}->{xrange}) eq 'ARRAY'   and 
+       $w->{options}->{xrange}->[0] == 21        and 
+       !defined($w->{options}->{xrange}->[1])
+    ), "xrange parses single list element correctly");
+
+eval { $w->options(justify=>"0") };
+ok(!$@, "justify accepts quoted zero");
+
+eval { $w->options(justify=>"-1") };
+ok($@ =~ m/positive/, "justify rejects negative numbers");
+undef $@;
+
+eval { $w->options(justify=>"1") };
+ok(!$@, "justify accepts positive numbers");
+
+##############################
+##############################
+## Test explicit and implicit plotting in 2-D and 3-D, both binary and ASCII
+
+$w = gpwin('dumb', output=>$testoutput);
+
+# Test ASCII plot handling
+$w->options(binary=>0);
+
+eval { $w->plot(with=>'lines',xvals(5)) };
+ok(!$@, "ascii plot with implicit col succeeded");
+
+ok($PDL::Graphics::Gnuplot::last_plotcmd =~ m/plot +\'\-\' +using 0\:1 /,
+   "ascii plot with implicit col uses explicit reference to column 0");
+
+eval { $w->plot(with=>'lines',xvals(5),xvals(5)) };
+ok(!$@, "ascii plot with no implicit col succeeded");
+ok($PDL::Graphics::Gnuplot::last_plotcmd =~ m/plot +\'\-\' +using 1\:2 /s,
+   "ascii plot with no implicit cols uses columns 1 and 2");
+
+eval { $w->plot(with=>'lines',xvals(5,5)) };
+ok(!$@, "ascii plot with threaded data and implicit column succeeded");
+ok($PDL::Graphics::Gnuplot::last_plotcmd =~ m/plot +\'-\' +using 0\:1 [^u]+using 0\:1 /s,
+   "threaded ascii plot with one implicit col does the Right Thing");
+
+
+eval { $w->plot(with=>'lines',xvals(5),{trid=>1}) };
+ok(!$@, "ascii 3-d plot with 2 implicit cols succeeded");
+ok($PDL::Graphics::Gnuplot::last_plotcmd =~ m/plot +\'-' +using 0\:\(\$0\*0\)\:1 /s,
+   "ascii plot with two implicit cols uses column 0 and zeroed-out column 0");
+
+eval { $w->plot(with=>'lines',xvals(5),xvals(5),{trid=>1})};
+ok($@, "ascii 3-d plot with 1 implicit col fails (0 or 2 only)");
+
+eval { $w->plot(with=>'lines',xvals(5),xvals(5),xvals(5),{trid=>1}) };
+ok(!$@, "ascii 3-d plot with no implicit cols succeeds");
+ok($PDL::Graphics::Gnuplot::last_plotcmd=~ m/plot +\'-\' +using 1\:2\:3 /s,
+   "ascii 3-d plot with no implicit cols does the Right Thing");
+
+eval { $w->plot(with=>'lines',xvals(5,5),{trid=>1}) };
+ok(!$@, "ascii 3-d plot with 2-D data and 2 implicit cols succeeded");
+ok($PDL::Graphics::Gnuplot::last_plotcmd =~ m/splot +\"-\" binary array\=\(5,5\) /s,
+   "ascii plot with 2-D data and 2 implicit cols uses binary ARRAY mode");
+
+eval { $w->plot(with=>'lines',xvals(5,5),xvals(5,5),{trid=>1}) };
+ok($@, "ascii 3-d plot with 2-D data and 1 implicit col fails (0 or 2 only)");
+
+eval { $w->plot(with=>'lines',xvals(5,5),xvals(5,5),xvals(5,5),{trid=>1}) };
+ok(!$@, "ascii 3-d plot with 2-D data and no implicit cols succeeded");
+ok($PDL::Graphics::Gnuplot::last_plotcmd =~ m/splot +\"-\" binary record\=\(5,5\) /s,
+   "ascii plot with 2-D data and no implicit cols uses binary RECORD mode");
+
+eval { $w->plot(with=>'yerrorbars', (xvals(50)-25)**2, pdl(0.5),{binary=>0})  };
+ok(!$@, "yerrorbars plot succeeded in ASCII mode");
+
+undef $w;
+unlink($testoutput) or warn "\$!: $!";
 
