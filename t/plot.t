@@ -1,6 +1,6 @@
 #!perl
 
-use Test::More tests => 156;
+use Test::More tests => 158;
 
 BEGIN {
     use_ok( 'PDL::Graphics::Gnuplot', qw(plot) ) || print "Bail out!\n";
@@ -303,7 +303,7 @@ ok( $PDL::Graphics::Gnuplot::last_plotcmd =~ m/set\s+output\s+\"[^\"]+\"\s+reset
 
 eval { $w->plot(xmin=>3,bottomcmds=>'reset',xrange=>[4,5],xvals(10),xvals(10)**2);};
 ok(!$@, "bottomcmds does not cause an error");
-ok( $PDL::Graphics::Gnuplot::last_plotcmd =~ m/\]\s+reset\s+set\ssize\snoratio/o, "bottomcmds inserts exactly one copy in the right place");
+ok( $PDL::Graphics::Gnuplot::last_plotcmd =~ m/\]\s+reset\s*$/o, "bottomcmds inserts exactly one copy in the right place");
 
 ##############################
 # Test tuple size determination: 2-D, 3-D, and variables (palette and variable)
@@ -477,7 +477,7 @@ unlink($testoutput) or warn "\$!: $!";
 SKIP: {
     unless(exists($ENV{GNUPLOT_INTERACTIVE})) {
 	print STDERR "\n\n******************************\nSkipping 27 interactive tests.\n    Set the environment variable GNUPLOT_INTERACTIVE to enable them.\n******************************\n\n";
-	skip "Skipping interactive tests - set env. variable GNUPLOT_INTERACTIVE to enable.",27;
+	skip "Skipping interactive tests - set env. variable GNUPLOT_INTERACTIVE to enable.",29;
     }
 
     eval { $w = gpwin('wxt'); };
@@ -523,6 +523,21 @@ SKIP: {
 	print STDERR "\n\nThe $w->{terminal} gnuplot terminal has no interactive zoom, skipping that test.\n\n";
 	ok(1,"skipping interactive-zoom test");
     }
+
+    eval { $w->reset; $w->plot( {title=>"Demo of two curves with Y1 and Y2", xl=>"X",yl=>"Y1",y2l=>"Y2"},
+				{axes=>'x1y1',leg=>'X^{2} (on Y1)'},xvals(50),xvals(50)**2,
+				{axes=>'x1y2',leg=>'X^{5} (on Y2)'},xvals(50),xvals(50)**5,
+				{y2t=>[0,5e7,4e8],y2r=>[0,3.5e8]}
+	       );};
+    print $PDL::Graphics::Gnuplot::last_plotcmd."\n";
+    print STDERR "\n\nAre there two curves labeled X^2 and X^5, with about the same vertical extent on the plot? (Y/n)";
+    $a = <STDIN>;
+    ok($a !~ m/n/i, "two curves are OK");
+
+    print STDERR "\n\nAre there appropriate tick marks in both Y1 and Y2 on opposite sides of the plot?\n";
+    print STDERR "  (There should be no ghost ticks from Y1 on the Y2 axis, or vice versa). (Y/n)";
+    $a = <STDIN>;
+    ok($a !~ m/n/i, "ticks look OK");
 
     eval { $w->reset; $w->options(binary=>0,tee=>1); $w->plot( {title => "Parabola with error bars"},
 				with=>"xyerrorbars", legend=>"Parabola",
@@ -760,7 +775,7 @@ SKIP:{
 # Check that 3D plotting of grids differs from threaded line plotting
 SKIP:{
     skip "Skipping 3-D plots since gnuplot is ancient",4
-	if($w->{gp_version} < $PDL::Graphics::Gnuplot::gnuplot_req_v);
+	if($w->{gp_version} < $PDL::Graphics::Gnuplot::gnuplot_dep_v);
 
     eval { $w->plot({trid=>1,title=>""},with=>'lines',sequence(3,3)); };
     ok(!$@, "3-d grid plot with single column succeeded");

@@ -64,7 +64,8 @@ WriteMakefile(
     ($ExtUtils::MakeMaker::VERSION >= 6.3002
      ? ('LICENSE'=> 'perl')
      : ()),
-    PREREQ_PM => { 'Test::More'  => 0,
+    PREREQ_PM => { 'Alien::Gnuplot' => 0,
+		   'Test::More'  => 0,
                    'PDL'         => 0,
                    'IPC::Run'    => 0,
 		   'List::Util'  => 0,
@@ -82,7 +83,7 @@ WriteMakefile(
     },		  
 
     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
-    clean               => { FILES => 'PDL-Graphics-Gnuplot-*' },
+    clean               => { FILES => 'PDL-Graphics-Gnuplot-* pdl_graphics_gnuplot_test_* *~' },
 	);
 	
 # reroute the main POD into a separate README.pod if requested. This is here
