@@ -50,7 +50,7 @@ sub MY::postamble {
     my $text = <<'FOO';
 install ::
 	@echo "Updating PDL documentation database...";
-	@$(PERL) -e "use PDL::Doc; eval { PDL::Doc::add_module(q{PDL::Graphics::Gnuplot}); }; ";
+	@$(PERL) -e "exit if $$ENV{DESTDIR}; use PDL::Doc; eval { PDL::Doc::add_module(q{PDL::Graphics::Gnuplot}); }; ";
 
 FOO
     return $text;
@@ -72,7 +72,8 @@ WriteMakefile(
 		   'Storable'    => 0,
 		   'IPC::Open3'  => 0,
 		   'IO::Select'  => 0,
-		   'Time::HiRes' => 0
+		   'Time::HiRes' => 0,
+		   'Safe::Isa'   => 0
     },
     META_ADD => {
 	resources => {

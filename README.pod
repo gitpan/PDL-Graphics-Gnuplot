@@ -22,7 +22,7 @@ PDL::Graphics::Gnuplot - Gnuplot-based plotting for PDL
        with => 'xyerrorbars', legend => 'Parabola',
        $x**2 * 10, abs($x)/10, abs($x)*5 );
 
- pdl> $xy = zeros(21,21)->ndcoords - pdl(10,10);
+ pdl> $xy = zeroes(21,21)->ndcoords - pdl(10,10);
  pdl> $z = inner($xy, $xy);
  pdl> gplot({title  => 'Heat map', 
              trid   => 1, 
@@ -33,8 +33,8 @@ PDL::Graphics::Gnuplot - Gnuplot-based plotting for PDL
 
  pdl> $w = gpwin();                             # constructor
  pdl> $pi    = 3.14159;
- pdl> $theta = zeros(200)->xlinvals(0, 6*$pi);
- pdl> $z     = zeros(200)->xlinvals(0, 5);
+ pdl> $theta = zeroes(200)->xlinvals(0, 6*$pi);
+ pdl> $z     = zeroes(200)->xlinvals(0, 5);
  pdl> $w->plot3d(cos($theta), sin($theta), $z);
  pdl> $w->terminfo();                           # get information
 
@@ -45,9 +45,9 @@ This module allows PDL data to be plotted using Gnuplot as a backend
 for 2D and 3D plotting and image display.  Gnuplot (not affiliated
 with the Gnu project) is a venerable, open-source program that
 produces both interactive and publication-quality plots on many
-different output devices.  You must obtain it separately from this
-interface module.  It is available through most Linux repositories, on
-MacOS via fink and MacPorts, and from its website L<http://www.gnuplot.info>.
+different output devices.  It is available through most Linux
+repositories, on MacOS, and from its website
+L<http://www.gnuplot.info>.
 
 It is not necessary to understand the gnuplot syntax to generate
 basic, or even complex, plots - though the full syntax is available
@@ -346,11 +346,9 @@ C<image>, etc.).
 
 The curve options are parameters that affect only one curve in particular. Each
 call to C<plot()> can contain many curves, and options for a particular curve
-I<precede> the data for that curve in the argument list. Furthermore, I<curve
-options are all cumulative>. So if you set a particular style for a curve, this
-style will persist for all the following curves, until this style is turned
-off. The only exception to this is the C<legend> option, since it's very rarely
-a good idea to have multiple curves with the same label. An example:
+I<precede> the data for that curve in the argument list. The actual type of curve
+(the "with" option) is persistent, but all other curve options and modifiers 
+are not.  An example:
 
  gplot( with => 'points',  $x, $a,
         {axes=> x1y2},     $x, $b,
@@ -358,14 +356,14 @@ a good idea to have multiple curves with the same label. An example:
 
 This plots 3 curves: $a vs. $x plotted with points on the main y-axis (this is
 the default), $b vs. $x plotted with points on the secondary y axis, and $c
-vs. $x plotted with lines also on the secondary y axis. Note that the curve
+vs. $x plotted with lines on the main y-axis (the default). Note that the curve
 options can be supplied as either an inline hash or a hash ref.
 
 All the curve options are described below in L</"Curve options">.
 
-If you want to plot multiple curves of the same type without changing any options
-between them, you must include an empty hash ref between the tuples for subsequent 
-lines, as in:
+If you want to plot multiple curves of the same type without setting
+any curve options explicitly, you must include an empty hash ref
+between the tuples for subsequent lines, as in:
 
  gplot( $x, $a, {}, $x, $b, {}, $x, $c );
 
@@ -556,7 +554,29 @@ availale terminals or, if you pass in a terminal name, options accepted
 by that terminal.
 
 
-=head2 POs for Titles: title, (x|x2|y|y2|z|cb)label, key
+=head2 POs for Titles
+
+The options described here are
+
+=over
+
+=item title
+
+=item xlabel
+
+=item x2label
+
+=item ylabel
+
+=item y2label
+
+=item zlabel
+
+=item cblabel
+
+=item key
+
+=back
 
 Gnuplot supports "enhanced" text escapes on most terminals; see "text",
 below.
@@ -616,7 +636,27 @@ containing (x,y): C<key=E<gt>[at=E<gt>[0.5,0.5]]>) is an exact location to place
 
 =back
 
-=head2 POs for axes, grids, & borders: grid, (x|x2|y|y2|z)zeroaxis, border
+=head2 POs for axes, grids, & borders
+
+The options described here are
+
+=over
+
+=item grid
+
+=item xzeroaxis
+
+=item x2zeroaxis
+
+=item yzeroaxis
+
+=item y2zeroaxis
+
+=item zzeroaxis
+
+=item border
+
+=back
 
 Normally, tick marks and their labels are applied to the border of a plot,
 and no extra axes (e.g. the y=0 line) nor coordinate grids are shown.  You can
@@ -673,7 +713,37 @@ scalar; if you want to set its parameters, you can feed in a list ref
 containing linewidth, linestyle, and linetype (with appropriate
 parameters for each), e.g.  C<< xzeroaxis=>[linewidth=>2] >>.
 
-=head2 POs for axis range and mode: (x|x2|y|y2|z|r|cb|t|u|v)range, autoscale, logscale
+=head2 POs for axis range and mode
+
+The options described here are
+
+=over
+
+=item xrange
+
+=item x2range
+
+=item yrange
+
+=item y2range
+
+=item zrange
+
+=item rrange
+
+=item cbrange
+
+=item trange
+
+=item urange
+
+=item vrange
+
+=item autoscale
+
+=item logscale
+
+=back
 
 Gnuplot accepts explicit ranges as plot options for all axes.  Each option
 accepts a list ref with (min, max).  If either min or max is missing, then
@@ -699,11 +769,11 @@ range on that axis.  C<autoscale> allows more explicit control of how
 autoscaling is performed, on an axis-by-axis basis.  It accepts a list
 ref, each element of which specifies how a single axis should be
 autoscaled.  Each element contains an axis name followed by one of
-"fix,"min","max","fixmin", or "fixmax", e.g. 
+"fix,"min","max","fixmin", or "fixmax", e.g.
 
  autoscale=>['xmax','yfix']
 
-To not autoscale an axis at all, specify a range for it. The fix style of 
+To not autoscale an axis at all, specify a range for it. The fix style of
 autoscaling forces the autoscaler to use the actual min/max of the data as
 the limit for the corresponding axis -- by default the axis gets extended
 to the next minor tic (as set by the autoticker or by a tic specification, see
@@ -716,7 +786,37 @@ the axes to scale logarithmically, and the second of which is the base
 of the logarithm: C<< logscale=>[xy=>10] >>.  You can also leave off the
 base if you want base-10 logs: C<< logscale=>['xy'] >>.
 
-=head2 POs for Axis tick marks - [m](x|x2|y|y2|z|cb)tics
+=head2 POs for Axis tick marks
+
+The options described here are
+
+=over
+
+=item xtics
+
+=item x2tics
+
+=item ytics
+
+=item y2tics
+
+=item ztics
+
+=item cbtics
+
+=item mxtics
+
+=item mx2tics
+
+=item mytics
+
+=item my2tics
+
+=item mztics
+
+=item mcbtics
+
+=back
 
 Axis tick marks are called "tics" within Gnuplot, and they are extensively
 controllable via the "{axis}tics" options.  In particular, major and minor
@@ -794,7 +894,49 @@ or
 
  xtics => ['axis','mirror','in','rotate by 45','font "Arial,9"']
 
-=head2 POs for time data values - (x|x2|y|y2|z|cb)(m|d)tics, (x|x2|y|y2|z|cb)data
+=head2 POs for time data values
+
+The options described here are
+
+=over
+
+=item xmtics
+
+=item x2mtics
+
+=item ymtics
+
+=item y2mtics
+
+=item zmtics
+
+=item cbmtics
+
+=item xdtics
+
+=item x2dtics
+
+=item ydtics
+
+=item y2dtics
+
+=item zdtics
+
+=item cbdtics
+
+=item xdata
+
+=item x2data
+
+=item ydata
+
+=item y2data
+
+=item zdata
+
+=item cbdata
+
+=back
 
 Gnuplot contains support for plotting absolute time and date on any of its axes,
 with conventional formatting. There are three main methods, which are mutually exclusive
@@ -875,7 +1017,31 @@ can treat the numeric range in terms of months rather than seconds.
 
 =back
 
-=head2 POs for location/size - (t|b|l|r)margin, offsets, origin, size, justify, clip
+=head2 POs for location/size
+
+The options described here are
+
+=over
+
+=item tmargin
+
+=item bmargin
+
+=item lmargin
+
+=item rmargin
+
+=item offsets
+
+=item origin
+
+=item size
+
+=item justify
+
+=item clip
+
+=back
 
 Adjusting the size, location, and margins of the plot on the plotting
 surface is something of a null operation for most single plots -- but
@@ -1135,7 +1301,7 @@ relative to the C<from> position, use "rto".
 
 =item (arrowstyle | as) <arrow_style>
 
-This specifies that the arrow be drawn in a particualr predeclared numerical
+This specifies that the arrow be drawn in a particular predeclared numerical
 style.  If you give this parameter, you shoudl omit all the following ones.
 
 =item ( nohead | head | backhead | heads ) - specify arrowhead placement
@@ -1476,11 +1642,13 @@ If we also have a corresponding $x domain, we can plot $y vs. $x with
 
 To change line thickness:
 
-  gplot(with => 'lines linewidth 4', $x, $y);
+  gplot(with => 'lines',linewidth=>4, $x, $y);
+  gplot(with => 'lines', lw=>4, $x, $y);
 
 To change point size and point type:
 
-  gplot(with => 'points pointtype 4 pointsize 8', $x, $y);
+  gplot(with => 'points',pointtype=>8, $x, $y);
+  gplot(with => 'points',pt=>8, $x, $y);
 
 =head3 Errorbars
 
@@ -1511,19 +1679,19 @@ Plotting with variable-size circles (size given in plot units, requires Gnuplot 
 Plotting with an variably-sized arbitrary point type (size given in multiples of
 the "default" point size)
 
-  gplot(with => 'points pointtype 7 pointsize variable', 
+  gplot(with => 'points', pointtype=>7, pointsize=>'variable',
         $x, $y, $sizes);
 
 Color-coded points
 
-  gplot(with => 'points palette', 
+  gplot(with => 'points', palette=>1,
         $x, $y, $colors);
 
 Variable-size AND color-coded circles. A Gnuplot (4.4.0) bug make it necessary to
 specify the color range here
 
   gplot(cbmin => $mincolor, cbmax => $maxcolor,
-        with => 'circles palette', 
+        with => 'circles', palette=>1, 
         $x, $y, $radii, $colors);
 
 =head2 3D plotting
@@ -1547,7 +1715,10 @@ Complicated 3D plot with fancy styling:
 
   splot(title => 'double helix',
 
-        { with => 'linespoints pointsize variable pointtype 7 palette',
+        { with => 'linespoints',
+          pointsize=>'variable', 
+          pointtype=>7,
+          palette=>1,
           legend => 'spiral 1' },
         { legend => 'spiral 2' },
 
@@ -1635,16 +1806,23 @@ a 3-tuple: X, Y, and R.
    $theta = xvals(201) * 6 * $pi / 200;
    $z     = xvals(201) * 5 / 200;
 
-   gplot( {trid => 1, title => 'double helix'},
-         {with => 'linespoints pointsize variable pointtype 2 palette',
-         legend => ['spiral 1','spiral 2']} ,
-         cdim=>1,
+   gplot( {trid => 1, title => 'double helix',cbr=>[0,1]},
+         {with => 'linespoints',
+          pointsize=>'variable',
+          pointtype=>2,
+          palette=>1,
+          legend => ['spiral 1','spiral 2'],
+          cdim=>1},
          pdl( cos($theta), -cos($theta) ),       # x
          pdl( sin($theta), -sin($theta) ),       # y
          $z,                                     # z
          (0.5 + abs(cos($theta))),               # pointsize
          sin($theta/3),                          # color
-         {with=>'points pointsize variable pointtype 5'},
+         { with=>'points',
+           pointsize=>'variable',
+           pointtype=>5, 
+           palette=>0
+         },
          zeroes(6),                         # x
          zeroes(6),                         # y
          xvals(6),                          # z
@@ -1677,10 +1855,6 @@ options for the second curve).
 
 =head1 FUNCTIONS
 
-=for ref
-
-
-
 =cut
 =pod
 
@@ -1699,8 +1873,8 @@ gpwin is the PDL::Graphics::Gnuplot exported constructor.  It is
 exported by default and is a synonym for "new
 PDL::Graphics::Gnuplot(...)".  If given no arguments, it creates a
 plot object with the default terminal settings for your gnuplot.  You
-also give it the name of a Gnuplot terminal type (e.g. 'x11') followed
-by output options (see "output").
+can also give it the name of a Gnuplot terminal type (e.g. 'x11') and
+some terminal and output options (see "output").
 
 
 =cut
@@ -1764,17 +1938,23 @@ other than this default, check the C<Alien::Gnuplot> documentation.
 
 =for usage
 
-    $window->output( device, %device_options, {plot_options} );
+    $window->output( $device );
+    $window->output( $device, %device_options );
+    $window->output( $device, %device_options, {plot_options} );
+    $window->output( %device_options, {plot_options} );
+    $window->output( %device_options );
 
 =for ref
 
-Sets the output device and options for a Gnuplot object.
+Sets the output device and options for a Gnuplot object. If you omit
+the C<$device> name, then you get the gnuplot default device (generally
+C<x11>, C<wxt>, or C<aqua>, depending on platform).
 
 You can control the output device of a PDL::Graphics::Gnuplot object on
 the fly.  That is useful, for example, to replot several versions of the 
 same plot to different output devices (interactive and hardcopy).
 
-Gnuplot interprets plot options differently per device.
+Gnuplot interprets terminal options differently per device.
 PDL::Graphics::Gnuplot attempts to interpret some of the more common
 ones in a common way.  In particular:
 
@@ -1812,7 +1992,7 @@ LaTeX-like markup for super/sub scripts and fonts).
 
 =back
 
-For a brief description of the plot options that any one device supports, 
+For a brief description of the terminal options that any one device supports, 
 you can run PDL::Graphics::Gnuplot::terminfo().
 
 As with plot options, terminal options can be abbreviated to the shortest
@@ -2283,6 +2463,10 @@ Craig DeForest, C<< <craig@deforest.org> >> and Dima Kogan, C<< <dima@secretsauc
 
 =over 3 
 
+=item - Hash values should be accepted (and parsed properly) for all plot options.
+
+Currently many of the more complicated plot options accept array refs only.  Hash ref parsing is needed for regularity.
+
 =item - labels need attention (plot option labels)
 
 They need to be handled as hashes, not just as array refs.  Also, they don't seem to be working with timestamps.
@@ -2294,77 +2478,6 @@ Further, deeply nested options (e.g. "at" for labels) need attention.
 
 The "boxplot" plot style (new to gnuplot 4.6?) requires a different using
 syntax and will require some hacking to support.
-
-=back
-
-=head1 RELEASE NOTES
-
-=head3 V2.0
-
- - Use Alien::Gnuplot for initial contact and global configuration
- - Don't complain about 'with'-modifiers
- - Several edge-case bugs fixed (thanks, Dima)
- - Colorspec parsing is better (and regularized with a procedure call)
- - SIGPIPE crashes fixed (mixing gnuplot and forking used to be dangerous)
- - internal representation of tics specifiers is better
- - better handling of tics when x2 or y2 is specified
- - better handling of images when x2 or y2 is specified
-
-=head3 Earlier versions
-
-=over 3
-
-=item V1.5
-
- - complex 'with' specifiers are deprecated.
- - curve options exist for plot variants (line color etc.)
- - lines are dashed, by default
- - windows don't persist, by default
- - bad value support
- - fixed a justify problem
- - several minor cross-platform issues
-
-=item V1.4
-
-Many thanks to Chris Marshall and Juergen Mueck, who both tested endless variants as
-we troubleshot bizarre IPC problems under Microsoft Windows with Strawberry Perl.
-
- - default to ascii data transfer under Microsoft Windows (Juergen's hang issue)
- - do better at ignoring chatter on Microsoft Windows (intercept ascii data prompts with a regexp)
- - clean up test reporting
- - deprecate gnuplot <4.6 and issue warning (and accommodate some missing keywords)
- - autoranging fix
- - read_polygon fix
- - Many small tweaks to make Microsoft Windows support better
- - Updates to POD documentation
- - Improved terminfo reporting
- - mouse-enabled default terminals are detected properly (e.g. 'x11').
- - includes "imag" and "points" for people who are used to PDL::Graphics::PGPLOT.
- - more careful I/O handling in the pipe
- - Improved interrupt handling
- - Sends output to gnuplot in chunks if necessary (gets around choking limitations on some platforms)
- - Allows specifying different commands than just "gnuplot" via environment variable GNUPLOT_BINARY.
- - Detects available terminal types from Gnuplot on initial startup.
- - supports m?tics options with hash syntax
-
-=item v1.3
-
- - Tests do not fail on v4.2 Gnuplot (still used on BSD)
- - Better error messages in common error cases
- - Several Microsoft Windows compatibility fixes (thanks, Sisyphus!)
-
-=item v1.2
-
- - Handles communication better on Microsoft Windows (MSW has brain damage).
- - Improvements in documentation
- - Handles PDF output in scripts
- - Handles 2-D and 1-D columns in 3-D plots (grid vs. threaded lines)
-
-=item v1.1
-
- - Handles communication with command echo on the pipe (for Microsoft Windows)
- - Better gnuplot error reporting
- - Fixed date range handling
 
 =back
 
