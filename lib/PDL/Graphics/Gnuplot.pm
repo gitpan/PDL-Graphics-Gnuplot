@@ -829,12 +829,15 @@ if you are plotting a parametric curve.
 By default all axes are autoscaled unless you specify a range on that
 axis, and partially (min or max) autoscaled if you specify a partial
 range on that axis.  C<autoscale> allows more explicit control of how
-autoscaling is performed, on an axis-by-axis basis.  It accepts a list
+autoscaling is performed, on an axis-by-axis basis.  It accepts a hash 
 ref, each element of which specifies how a single axis should be
-autoscaled.  Each element contains an axis name followed by one of
-"fix,"min","max","fixmin", or "fixmax", e.g.
+autoscaled.  Each keyword contains an axis name followed by one of 
+"fix", "min", "max", "fixmin", or "fixmax".  You can set all the axes at
+once by setting the keyword name to ' '.  Examples:
 
- autoscale=>['xmax','yfix']
+ autoscale=>{x=>'max',y=>'fix'};
+
+There is an older list ref syntax which is deprecated but still accepted.
 
 To not autoscale an axis at all, specify a range for it. The fix style of
 autoscaling forces the autoscaler to use the actual min/max of the data as
@@ -1949,10 +1952,12 @@ our $MS_io_braindamage = ($^O =~ m/MSWin32/i);    # Do some different things on 
 our $debug_echo = 0;                              # If set, mock up Losedows half-duplex pipes
 
 
-our $VERSION = '2.003';   
+our $VERSION = '2.004';   
 $VERSION = eval $VERSION;
 
 our $gp_version = undef;   # eventually gets the extracted gnuplot(1) version number.
+
+my $did_warn_non_numeric_patchlevel; # whether we already warned about this
 
 use base 'Exporter';
 our @EXPORT_OK = qw(plot plot3d line lines points image terminfo reset restart replot);
@@ -4775,9 +4780,6 @@ our $pOptionsTable =
 		    ['palette'],undef,
 		    '[pseudo] Use named color look-up table for palette: "clut=>\'heat2\'"'    ],
 
-    'globalwith'=> ['l',sub { return '' },undef,undef,  # pseudo-option to add 'with' parameters
-		    '[pseudo] Set default "with" plot style for the object'  ], 
-
     'globalPlot'=> ['l',sub { return '' },undef,undef,
 		    '[pseudo] marker for the global plot object'    ], 
 
@@ -4818,10 +4820,10 @@ our $pOptionsTable =
 		    '(radians or degrees): sets unit in which angles will be specified'    ],
     'arrow'     => ['N','N',undef,undef,
 		    'allows specification of arrows to be drawn on subsequent plots'    ],
-    'autoscale' => ['l','1',undef,undef,
-		    'autoscaling style: autoscale=>"(x|y|z|cb|x2|y2|xy) (fix)?(min|max)?".'    ],
+    'autoscale' => ['lh','H2',undef,undef,
+		    'autoscaling style: autoscale=>{ (x|y|z|cb|x2|y2|xy) => (0|" "|fix|fixmin|fixmax|min|max) }.'    ],
     'bars'      => ['l','l',undef,undef,
-		    'errorbar ticsize: bars=>"(small|large|fullwidth|<size>) (front|back)?"'    ],
+		    'errorbar ticsize: bars=> {(small|large|fullwidth|<size>) => (0|" "|front|back) }."'    ],
     'bmargin'   => ['s','s',undef,undef,
 		    'bottom margin (chars); bmargin=>"at screen <frac>" for pane-rel. size'    ],
     'border'    => ['l','l',undef,undef,
@@ -5487,6 +5489,19 @@ $_pOHInputs = {
 		 }
                 },
 
+    ## one-line list (can also be boolean or hash)
+    'lh' => sub { return undef unless(defined $_[1]);
+		 return "" unless(length($_[1]));                                 # false value yields false
+		 return $_[1] if( (!ref($_[1])) && "$_[1]" =~ m/^\s*\-?\d+\s*$/); # nonzero integers yield true
+		 # Not setting a boolean value - it's a list (or a trivial list).
+		 if(ref $_[1] eq 'ARRAY'   or   ref $_[1] eq 'HASH') {
+		     return $_[1];
+		 } else {
+#		     return [ split( /\s+/, $_[1] ) ];
+		     return [$_[1]];
+		 }
+                },
+
     ## list or 2-PDL for a range parameter
     'lr' => sub { return undef unless(defined $_[1]);
 		 return "" unless(length($_[1]));                                 # false value yields false
@@ -6118,7 +6133,8 @@ our $_OptionEmitters = {
     "H" => sub { my($k,$v,$h) = @_;
 		 return "" unless(defined $v);
 		 if(ref $v eq 'ARRAY') {
-		     barf "array value found for hash option '$k' -- not allowed";
+		     # Note list form doesn't allow unsetting.  Such is life - lists are deprecated in most contexts.
+		     return join("", map { defined($_) ? "set $k $_\n" : "" } @$v);
 		 } elsif(ref($v) eq 'HASH') {
 		     return "set $k\n" unless(keys(%$v));
 		     return join("", map { my $l = "";
@@ -6140,7 +6156,39 @@ our $_OptionEmitters = {
 		 } else {
 		     barf "scalar value '$v' not allowed for hash option '$k'";
 		 }
-                },
+    },
+
+    #### A set of sub-keywords each of which may contain a list of terms, sort-of.
+    #### This is used for autoscale -- there's no space between keyword and value, and a missing hash causes "unset" to be emitted.
+    "H2" => sub { my($k,$v,$h) = @_;
+		  unless($v) {
+		      return "unset $k\n";
+		  }
+		  if(ref $v eq 'ARRAY') {
+		      # Note list form doesn't allow unsetting.  Such is life - lists are deprecated in most contexts.
+		      return join("", map { defined($_) ? "set $k $_\n" : "" } @$v);
+		  } elsif(ref($v) eq 'HASH') {
+		      return "set $k\n" unless(keys(%$v));
+		      return join("", map { my $l = "";
+					    if(defined($v->{$_})) {
+						unless($v->{$_}) {
+						    $l = "unset $k $_\n";
+						} elsif(ref $v->{$_} eq 'ARRAY') {
+						    $l = "set $k $_ ".join(" ",@{$v->{$_}})."\n";
+						} elsif(ref $v->{$_} eq 'HASH') {
+						    barf "Nested hashes not allowed in hash option '$k'";
+						} else {
+						    $l = "set $k $_$v->{$_}\n";
+						}
+					    }
+					    $l;
+				  } 
+				  sort keys %$v
+			  );
+		  } else {
+		      barf "scalar value '$v' not allowed for hash option '$k'";
+		  }
+    },
 
     #### Terminal options hash
     "HNM" => sub { my($k,$v,$h) = @_;
@@ -6497,6 +6545,11 @@ our $termTabSource = {
 		 opt=>[ qw/ color monochrome solid dashed enhanced /,
 			['noproportional','b','cff',"(only with 'enhanced') - disable proportional font spacing"],
 			qw/ linewidth dashlength size output /]},
+    'epscairo'=>{unit=>'in',desc=>"Encapsulated Postscript output via Cairo 2-D plotting library",ok=>1,
+		 opt=>[ 'enhanced',
+			['monochrome','b', sub{return $_[1]?" mono ":""},
+			                         "Generate a B/W plot (see 'color') if true"], # shield user from mono/monochrome
+			qw/color solid dashed font linewidth rounded butt dashlength size output/ ]},
     'epslatex'=>{unit=>'in',desc=>"Encapsulated PostScript with LaTeX text segments",
 		 opt=>[ qw/standalone input oldstyle newstyle level1 leveldefault color monochrome/,
 			qw/solid dashed dashlength linewidth rounded butt clip size font output/]
@@ -6967,7 +7020,7 @@ EOM
 ##############################
 # Parse version number.  If the version or pl changed, try reloading Alien::Gnuplot
 # to get them in sync.
-	if( $s =~ m/Version (\d+\.\d+) (patchlevel (\d+))?/i ) {
+	if( $s =~ m/Version (\d+\.\d+) (patchlevel (\w+))?/i ) {
 	    $gp_version = $1;
 	    $gp_pl = $3;
 	    $this->{gp_version} = $1;
@@ -7000,19 +7053,27 @@ EOM
 	    return $this;
 	}
 
-	if( $gp_version ne $Alien::Gnuplot::version or $gp_pl ne $Alien::Gnuplot::pl ) {
-	    print STDERR <<"EOM";
+	if($gp_pl =~ m/[a-z]+/) {
+	    unless($PDL::Graphics::Gnuplot::non_numeric_patch_warned) {
+		print STDERR "WARNING: your gnuplot has a non-numeric patchlevel '$gp_pl'.  Use with caution.\n(warning will not be repeated)\n";
+		$PDL::Graphics::Gnuplot::non_numeric_patch_warned = 1;
+	    }
+	} else {
+	    $PDL::Graphics::Gnuplot::non_numeric_patch_warned = 0;
+	    if( $gp_version ne $Alien::Gnuplot::version or $gp_pl ne $Alien::Gnuplot::pl ) {
+		print STDERR <<"EOM";
 WARNING: we found gnuplot version '$gp_version' pl '$gp_pl' but Alien::Gnuplot reported 
 a different version ('$Alien::Gnuplot::version' pl '$Alien::Gnuplot::pl').  Reloading Alien::Gnuplot...
 EOM
-            Alien::Gnuplot::load_gnuplot();
-            _load_alien_gnuplot();
-	    if( $gp_version ne $Alien::Gnuplot::version or $gp_pl ne $Alien::Gnuplot::pl ) {
-		print STDERR <<"EOM"
+		Alien::Gnuplot::load_gnuplot();
+		_load_alien_gnuplot();
+		if( $gp_version ne $Alien::Gnuplot::version or $gp_pl ne $Alien::Gnuplot::pl ) {
+		    print STDERR <<"EOM"
 Hmmm, that\'s funny.  Reloading Alien::Gnuplot gave version '$Alien::Gnuplot::version' pl '$Alien::Gnuplot::pl',
 which still doesn\'t match.  Proceed with caution!
 
 EOM
+		}
 	    }
 	}
 
@@ -7728,7 +7789,7 @@ Craig DeForest, C<< <craig@deforest.org> >> and Dima Kogan, C<< <dima@secretsauc
 
 =over 3 
 
-=item - Hash values should be accepted (and parsed properly) for all plot options.
+=item - Hash values should be accepted (and parsed properly) for all plot options for which they work.
 
 Currently many of the more complicated plot options accept array refs only.  Hash ref parsing is needed for regularity.
 
